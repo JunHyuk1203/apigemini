@@ -50,7 +50,9 @@
     webSearchEnabled: true,
     isGenerating: false,
     currentAbortController: null,
-    searchQuery: ''
+    searchQuery: '',
+    attachedFiles: [],      // { name, type, data (base64 or text), mimeType, isImage }
+    thinkingBudget: 1       // 0=없음, 1=보통, 2=높음, 3=최대
   };
 
   // ==========================================================================
@@ -104,6 +106,19 @@
     stopGenerationBtn: document.getElementById('stopGenerationBtn'),
     toggleWebSearchBtn: document.getElementById('toggleWebSearchBtn'),
     webSearchBtnLabel: document.getElementById('webSearchBtnLabel'),
+    attachFileBtn: document.getElementById('attachFileBtn'),
+    fileAttachInput: document.getElementById('fileAttachInput'),
+    attachmentPreview: document.getElementById('attachmentPreview'),
+    thinkingBudgetSlider: document.getElementById('thinkingBudgetSlider'),
+    thinkingLevelText: document.getElementById('thinkingLevelText'),
+
+    // Model Picker
+    inputModelIndicator: document.getElementById('inputModelIndicator'),
+    modelPickerBackdrop: document.getElementById('modelPickerBackdrop'),
+    modelPickerList: document.getElementById('modelPickerList'),
+    modelPickerSearch: document.getElementById('modelPickerSearch'),
+    modelPickerCloseBtn: document.getElementById('modelPickerCloseBtn'),
+    refreshModelsBtnInline: document.getElementById('refreshModelsBtnInline'),
 
     // Modals
     webSearchModalCheckbox: document.getElementById('webSearchModalCheckbox'),
@@ -474,8 +489,11 @@
     };
 
     dom.activeModelName.textContent = currentModelObj.displayName;
-    dom.inputModelIndicator.textContent = currentModelObj.name;
-    dom.modelDesc.textContent = currentModelObj.description || 'Google DeepMind 최신 LLM';
+    // Model indicator pill 업데이트
+    if (dom.inputModelIndicator) {
+      dom.inputModelIndicator.textContent = currentModelObj.displayName || currentModelObj.name;
+    }
+    if (dom.modelDesc) dom.modelDesc.textContent = currentModelObj.description || 'Google DeepMind 최신 LLM';
 
     if (currentModelObj.name.includes('flash')) {
       dom.modelTypeBadge.textContent = '초고속 (Flash)';
@@ -729,9 +747,25 @@
       `;
     }
 
+    // Build attachment display HTML for user messages
+    let attachmentDisplayHtml = '';
+    if (msg.role === 'user' && msg.attachments && msg.attachments.length > 0) {
+      attachmentDisplayHtml = '<div class="msg-attachments">';
+      msg.attachments.forEach(att => {
+        if (att.isImage && att.previewUrl) {
+          attachmentDisplayHtml += `<img src="${att.previewUrl}" class="msg-att-img" alt="${escapeHtml(att.name)}" title="${escapeHtml(att.name)}">`;
+        } else {
+          const ext = att.name.split('.').pop().toUpperCase();
+          attachmentDisplayHtml += `<span class="msg-att-file"><span class="msg-att-ext">${escapeHtml(ext)}</span>${escapeHtml(att.name)}</span>`;
+        }
+      });
+      attachmentDisplayHtml += '</div>';
+    }
+
     const contentHtml = msg.role === 'user'
-      ? `<div class="message-bubble">${escapeHtml(msg.content).replace(/\n/g, '<br>')}</div>`
+      ? `<div class="message-bubble">${attachmentDisplayHtml}${msg.content ? escapeHtml(msg.content).replace(/\n/g, '<br>') : ''}</div>`
       : `<div class="message-bubble">${renderMarkdown(msg.content)}</div>`;
+
 
     let actionsHtml = '';
     if (msg.role === 'user') {
@@ -889,12 +923,182 @@
   }
 
   // ==========================================================================
+  // 10.5 File Attachment Logic
+  // ==========================================================================
+
+  const THINKING_BUDGET_TOKENS = [0, 1024, 8192, 24576];
+  const THINKING_BUDGET_LABELS = ['없음', '보통', '높음', '최대'];
+
+  function updateThinkingSliderUI() {
+    const v = parseInt(dom.thinkingBudgetSlider.value, 10);
+    state.thinkingBudget = v;
+    if (dom.thinkingLevelText) {
+      dom.thinkingLevelText.textContent = THINKING_BUDGET_LABELS[v];
+      // 색상 표시
+      const colors = ['#6b7280', '#4f8aff', '#8b5cf6', '#ec4899'];
+      dom.thinkingLevelText.style.color = colors[v];
+    }
+  }
+
+  function handleFileAttach(files) {
+    if (!files || files.length === 0) return;
+    const allowed = Array.from(files).slice(0, 5 - state.attachedFiles.length); // max 5 파일
+
+    allowed.forEach(file => {
+      const isImage = file.type.startsWith('image/');
+      const reader = new FileReader();
+
+      if (isImage) {
+        reader.onload = (e) => {
+          const base64Data = e.target.result.split(',')[1];
+          state.attachedFiles.push({
+            name: file.name,
+            type: 'image',
+            mimeType: file.type,
+            data: base64Data,
+            isImage: true,
+            previewUrl: e.target.result
+          });
+          renderAttachmentPreview();
+        };
+        reader.readAsDataURL(file);
+      } else {
+        reader.onload = (e) => {
+          state.attachedFiles.push({
+            name: file.name,
+            type: 'file',
+            mimeType: file.type || 'text/plain',
+            data: e.target.result,
+            isImage: false
+          });
+          renderAttachmentPreview();
+        };
+        reader.readAsText(file);
+      }
+    });
+  }
+
+  function renderAttachmentPreview() {
+    if (!dom.attachmentPreview) return;
+    dom.attachmentPreview.innerHTML = '';
+
+    if (state.attachedFiles.length === 0) {
+      dom.attachmentPreview.classList.remove('has-attachments');
+      return;
+    }
+    dom.attachmentPreview.classList.add('has-attachments');
+
+    state.attachedFiles.forEach((f, idx) => {
+      const chip = document.createElement('div');
+      chip.className = 'attachment-chip';
+
+      if (f.isImage && f.previewUrl) {
+        chip.innerHTML = `
+          <img src="${f.previewUrl}" class="attachment-chip-img" alt="${escapeHtml(f.name)}">
+          <span class="attachment-chip-name">${escapeHtml(f.name)}</span>
+          <button class="attachment-chip-remove" data-idx="${idx}" aria-label="제거">
+            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="3" fill="none">
+              <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        `;
+      } else {
+        const ext = f.name.split('.').pop().toUpperCase();
+        chip.innerHTML = `
+          <span class="attachment-chip-ext">${escapeHtml(ext)}</span>
+          <span class="attachment-chip-name">${escapeHtml(f.name)}</span>
+          <button class="attachment-chip-remove" data-idx="${idx}" aria-label="제거">
+            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="3" fill="none">
+              <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        `;
+      }
+
+      chip.querySelector('.attachment-chip-remove').addEventListener('click', () => {
+        state.attachedFiles.splice(idx, 1);
+        renderAttachmentPreview();
+      });
+
+      dom.attachmentPreview.appendChild(chip);
+    });
+  }
+
+  // ==========================================================================
+  // 10.6 Model Picker Popup Logic
+  // ==========================================================================
+
+  function openModelPicker() {
+    renderModelPickerList('');
+    dom.modelPickerBackdrop.classList.add('active');
+    setTimeout(() => { if (dom.modelPickerSearch) dom.modelPickerSearch.focus(); }, 100);
+  }
+
+  function closeModelPicker() {
+    dom.modelPickerBackdrop.classList.remove('active');
+    if (dom.modelPickerSearch) dom.modelPickerSearch.value = '';
+  }
+
+  function renderModelPickerList(query) {
+    if (!dom.modelPickerList) return;
+    dom.modelPickerList.innerHTML = '';
+
+    const q = (query || '').toLowerCase();
+    const filtered = state.models.filter(m =>
+      !q || m.name.toLowerCase().includes(q) || (m.displayName || '').toLowerCase().includes(q)
+    );
+
+    if (filtered.length === 0) {
+      dom.modelPickerList.innerHTML = '<div class="model-picker-empty">모델을 찾을 수 없습니다.</div>';
+      return;
+    }
+
+    filtered.forEach(model => {
+      const item = document.createElement('button');
+      item.className = 'model-picker-item' + (model.name === state.selectedModel ? ' selected' : '');
+      item.type = 'button';
+
+      let badge = '';
+      if (model.name.includes('flash')) badge = '<span class="mpicker-badge flash">초고속</span>';
+      else if (model.name.includes('thinking')) badge = '<span class="mpicker-badge thinking">사고력</span>';
+      else if (model.name.includes('pro')) badge = '<span class="mpicker-badge pro">고성능</span>';
+      else badge = '<span class="mpicker-badge std">표준</span>';
+
+      const checkmark = model.name === state.selectedModel
+        ? '<svg class="mpicker-check" viewBox="0 0 24 24" width="14" height="14" stroke="#10b981" stroke-width="2.5" fill="none"><path d="M20 6L9 17l-5-5"></path></svg>'
+        : '';
+
+      item.innerHTML = `
+        <div class="mpicker-item-main">
+          ${badge}
+          <div class="mpicker-item-info">
+            <span class="mpicker-item-name">${escapeHtml(model.displayName || model.name)}</span>
+            <span class="mpicker-item-desc">${escapeHtml(model.name)}</span>
+          </div>
+        </div>
+        ${checkmark}
+      `;
+
+      item.addEventListener('click', () => {
+        state.selectedModel = model.name;
+        localStorage.setItem(STORAGE_KEYS.SELECTED_MODEL, model.name);
+        updateModelInfoDisplay();
+        showToast(`모델: ${model.displayName || model.name}`, 'success');
+        closeModelPicker();
+      });
+
+      dom.modelPickerList.appendChild(item);
+    });
+  }
+
+  // ==========================================================================
   // 11. Streaming Chat Implementation
   // ==========================================================================
 
   async function handleSendMessage() {
     const rawText = dom.messageInput.value.trim();
-    if (!rawText || state.isGenerating) return;
+    const hasAttachments = state.attachedFiles.length > 0;
+    if (!rawText && !hasAttachments || state.isGenerating) return;
 
     if (!state.apiKey) {
       openApiKeyModal();
@@ -911,15 +1115,18 @@
 
     // Set title on first message
     if (session.messages.length === 0) {
-      session.title = rawText.length > 25 ? rawText.slice(0, 25) + '...' : rawText;
+      const titleText = rawText || (state.attachedFiles.length > 0 ? `[${state.attachedFiles[0].name}]` : '새 대화');
+      session.title = titleText.length > 25 ? titleText.slice(0, 25) + '...' : titleText;
       dom.currentSessionTitle.textContent = session.title;
     }
 
-    // 1. Add User Message
+    // 1. Add User Message (with attachments snapshot)
+    const attachmentSnapshot = [...state.attachedFiles];
     const userMsg = {
       id: 'usr_' + Date.now(),
       role: 'user',
       content: rawText,
+      attachments: attachmentSnapshot,
       timestamp: Date.now()
     };
     session.messages.push(userMsg);
@@ -931,8 +1138,10 @@
     dom.messagesList.classList.remove('hidden');
     appendMessageToDOM(userMsg, true);
 
-    // Clear input
+    // Clear input and attachments
     dom.messageInput.value = '';
+    state.attachedFiles = [];
+    renderAttachmentPreview();
     adjustTextareaHeight();
     updateCharCount();
 
@@ -969,11 +1178,11 @@
       </div>
     `;
 
-    // 3. Start Streaming API Call
-    await executeGeminiStream(session, aiMsg, bubble, aiRow);
+    // 3. Start Streaming API Call (pass attachments snapshot)
+    await executeGeminiStream(session, aiMsg, bubble, aiRow, attachmentSnapshot);
   }
 
-  async function executeGeminiStream(session, aiMsg, bubbleElement, aiRow) {
+  async function executeGeminiStream(session, aiMsg, bubbleElement, aiRow, attachmentSnapshot = []) {
     state.isGenerating = true;
     state.currentAbortController = new AbortController();
     dom.sendMessageBtn.classList.add('hidden');
@@ -983,18 +1192,39 @@
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(state.apiKey)}`;
 
     // Build multi-turn contents payload
-    // Gemini API expects: role: "user" | "model"
     const contentsPayload = [];
 
-    // Filter out errors or the current empty placeholder
+    // All messages except the current empty AI placeholder
     const validHistory = session.messages.slice(0, session.messages.length - 1);
     for (const msg of validHistory) {
-      if (msg.error || !msg.content) continue;
-      contentsPayload.push({
-        role: msg.role === 'model' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-      });
+      if (msg.error || (!msg.content && (!msg.attachments || msg.attachments.length === 0))) continue;
+      const parts = [];
+
+      // 첨부 파일 parts (user 메시지에만)
+      if (msg.role === 'user' && msg.attachments && msg.attachments.length > 0) {
+        msg.attachments.forEach(att => {
+          if (att.isImage) {
+            parts.push({ inlineData: { mimeType: att.mimeType, data: att.data } });
+          } else {
+            parts.push({ text: `[파일: ${att.name}]
+${att.data}` });
+          }
+        });
+      }
+
+      if (msg.content) {
+        parts.push({ text: msg.content });
+      }
+
+      if (parts.length > 0) {
+        contentsPayload.push({
+          role: msg.role === 'model' ? 'model' : 'user',
+          parts
+        });
+      }
     }
+
+    // 현재 메시지는 이미 history 안에 담겼으므로, 첨부파일은 마지막 user 메시지에 자동으로 포함됨
 
     // Build Generation Config
     const generationConfig = {
@@ -1003,6 +1233,14 @@
       topP: parseFloat(state.settings.topP) || 0.95
     };
 
+    // Thinking Budget
+    const budgetTokens = THINKING_BUDGET_TOKENS[state.thinkingBudget];
+    if (budgetTokens > 0) {
+      generationConfig.thinkingConfig = { thinkingBudget: budgetTokens };
+    } else {
+      generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    }
+
     const requestBody = {
       contents: contentsPayload,
       generationConfig: generationConfig
@@ -1010,11 +1248,7 @@
 
     // Google Search Grounding Tool
     if (state.webSearchEnabled) {
-      requestBody.tools = [
-        {
-          google_search: {}
-        }
-      ];
+      requestBody.tools = [{ google_search: {} }];
     }
 
     // Add System Instruction if present
@@ -1517,11 +1751,98 @@
       });
     }
 
+    // File Attachment
+    if (dom.attachFileBtn && dom.fileAttachInput) {
+      dom.attachFileBtn.addEventListener('click', () => {
+        dom.fileAttachInput.click();
+      });
+      dom.fileAttachInput.addEventListener('change', (e) => {
+        handleFileAttach(e.target.files);
+        e.target.value = ''; // reset input
+      });
+    }
+
+    // Drag & Drop on textarea
+    if (dom.messageInput) {
+      dom.messageInput.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dom.messageInput.classList.add('drag-over');
+      });
+      dom.messageInput.addEventListener('dragleave', () => {
+        dom.messageInput.classList.remove('drag-over');
+      });
+      dom.messageInput.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dom.messageInput.classList.remove('drag-over');
+        if (e.dataTransfer.files.length > 0) {
+          handleFileAttach(e.dataTransfer.files);
+        }
+      });
+
+      // Paste image from clipboard
+      dom.messageInput.addEventListener('paste', (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        const imageItems = Array.from(items).filter(i => i.type.startsWith('image/'));
+        if (imageItems.length > 0) {
+          const files = imageItems.map(i => i.getAsFile()).filter(Boolean);
+          if (files.length > 0) {
+            handleFileAttach(files);
+          }
+        }
+      });
+    }
+
+    // Thinking Budget Slider
+    if (dom.thinkingBudgetSlider) {
+      dom.thinkingBudgetSlider.addEventListener('input', updateThinkingSliderUI);
+      updateThinkingSliderUI();
+    }
+
+    // Model Picker
+    if (dom.inputModelIndicator) {
+      dom.inputModelIndicator.addEventListener('click', openModelPicker);
+    }
+    if (dom.modelPickerCloseBtn) {
+      dom.modelPickerCloseBtn.addEventListener('click', closeModelPicker);
+    }
+    if (dom.modelPickerBackdrop) {
+      dom.modelPickerBackdrop.addEventListener('click', (e) => {
+        if (e.target === dom.modelPickerBackdrop) closeModelPicker();
+      });
+    }
+    if (dom.modelPickerSearch) {
+      dom.modelPickerSearch.addEventListener('input', (e) => {
+        renderModelPickerList(e.target.value);
+      });
+    }
+    if (dom.refreshModelsBtnInline) {
+      dom.refreshModelsBtnInline.addEventListener('click', async () => {
+        if (!state.apiKey) {
+          showToast('API 키를 먼저 등록해주세요.', 'warning');
+          closeModelPicker();
+          openApiKeyModal();
+          return;
+        }
+        try {
+          dom.refreshModelsBtnInline.style.opacity = '0.5';
+          await fetchAvailableModels(state.apiKey);
+          renderModelPickerList(dom.modelPickerSearch?.value || '');
+          showToast('모델 목록이 새로고침되었습니다.', 'success');
+        } catch (err) {
+          showToast(`새로고침 실패: ${err.message}`, 'error');
+        } finally {
+          dom.refreshModelsBtnInline.style.opacity = '';
+        }
+      });
+    }
+
     // Global Escape Key to close modals
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         closeApiKeyModal();
         closeSettingsModal();
+        closeModelPicker();
         closeSidebar();
       }
     });

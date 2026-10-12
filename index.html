@@ -68,28 +68,16 @@
         </button>
       </div>
 
-      <!-- 모델 선택 섹션 -->
-      <div class="sidebar-section">
-        <div class="section-title-wrap">
-          <span class="section-title">AI 모델</span>
-          <button class="btn-refresh-models" id="refreshModelsBtn" title="모델 목록 새로고침">
-            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
-              <path d="M23 4v6h-6"></path>
-              <path d="M1 20v-6h6"></path>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-          </button>
-        </div>
-        <div class="model-select-wrapper">
-          <select id="modelSelect" class="form-select" aria-label="Gemini 모델 선택">
-            <option value="" disabled selected>API 키 입력 후 로드됨</option>
-          </select>
-          <div class="model-meta-info" id="modelMetaInfo">
-            <span class="meta-badge" id="modelTypeBadge">자동 감지</span>
-            <span class="meta-desc" id="modelDesc">API 키를 설정하면 사용 가능한 모든 모델이 로드됩니다.</span>
-          </div>
-        </div>
+      <!-- 숨겨진 모델 select (JS와 호환 유지) -->
+      <select id="modelSelect" class="hidden-model-select" aria-label="Gemini 모델 선택" style="display:none;">
+        <option value="" disabled selected>API 키 입력 후 로드됨</option>
+      </select>
+      <!-- 숨겨진 메타 정보 -->
+      <div id="modelMetaInfo" style="display:none;">
+        <span id="modelTypeBadge">자동 감지</span>
+        <span id="modelDesc"></span>
       </div>
+      <button id="refreshModelsBtn" style="display:none;"></button>
 
       <!-- 대화 목록 (세션) -->
       <div class="sidebar-section session-section">
@@ -257,7 +245,13 @@
       <!-- 입력창 하단 바 -->
       <footer class="input-area">
         <div class="input-wrapper">
+          <!-- 파일 첨부 미리보기 영역 -->
+          <div class="attachment-preview" id="attachmentPreview"></div>
+
           <div class="input-container">
+            <!-- 파일 첨부 hidden input -->
+            <input type="file" id="fileAttachInput" accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.ts,.py,.java,.cpp,.c,.html,.css" multiple style="display:none;" aria-label="파일 첨부">
+
             <textarea
               id="messageInput"
               class="message-textarea"
@@ -268,6 +262,14 @@
 
             <div class="input-controls">
               <div class="input-hints">
+                <!-- 파일 첨부 버튼 -->
+                <button type="button" class="btn-attach" id="attachFileBtn" title="사진·파일 첨부">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                  </svg>
+                  <span>첨부</span>
+                </button>
+                <span class="hint-separator">•</span>
                 <button type="button" class="btn-toggle-search active" id="toggleWebSearchBtn" title="Google 실시간 웹 검색(Grounding) 켜기/끄기">
                   <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
                     <circle cx="12" cy="12" r="10"></circle>
@@ -279,7 +281,8 @@
                 <span class="hint-separator">•</span>
                 <span id="charCount">0자</span>
                 <span class="hint-separator">•</span>
-                <span class="active-model-pill" id="inputModelIndicator">모델 미선택</span>
+                <!-- 모델 표시 pill - 클릭하면 모델 선택 팝업 -->
+                <button type="button" class="active-model-pill" id="inputModelIndicator" title="클릭하여 모델 변경">모델 미선택</button>
               </div>
 
               <div class="input-actions">
@@ -299,6 +302,25 @@
               </div>
             </div>
           </div>
+
+          <!-- 사고 깊이 슬라이더 -->
+          <div class="thinking-slider-row" id="thinkingSliderRow">
+            <div class="thinking-slider-label">
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none">
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+              <span>사고 깊이</span>
+              <span class="thinking-level-text" id="thinkingLevelText">보통</span>
+            </div>
+            <div class="thinking-slider-wrap">
+              <span class="thinking-tick">없음</span>
+              <input type="range" id="thinkingBudgetSlider" class="thinking-range" min="0" max="3" step="1" value="1">
+              <span class="thinking-tick">최대</span>
+            </div>
+          </div>
+
           <div class="footer-caption">
             <span>Google 실시간 웹 검색(Grounding) 지원 • Gemini API 직통 통신 • 안전한 로컬 보관</span>
           </div>
@@ -460,6 +482,50 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="resetSettingsBtn">기본값 복원</button>
         <button class="btn btn-primary" id="saveSettingsBtn">설정 적용</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 모델 선택 팝업 (인라인 모델 피커) -->
+  <div class="model-picker-backdrop" id="modelPickerBackdrop">
+    <div class="model-picker-popup" id="modelPickerPopup" role="dialog" aria-label="모델 선택">
+      <div class="model-picker-header">
+        <span class="model-picker-title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="url(#mp-grad)"/>
+            <defs>
+              <linearGradient id="mp-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#7928CA"/><stop offset="1" stop-color="#00DFD8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          AI 모델 선택
+        </span>
+        <div class="model-picker-search-wrap">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="modelPickerSearch" placeholder="모델 검색..." autocomplete="off">
+        </div>
+        <button class="model-picker-close" id="modelPickerCloseBtn" aria-label="닫기">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="model-picker-list" id="modelPickerList">
+        <!-- 동적 렌더링 -->
+      </div>
+      <div class="model-picker-footer">
+        <button class="btn-refresh-models-inline" id="refreshModelsBtnInline">
+          <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          모델 목록 새로고침
+        </button>
       </div>
     </div>
   </div>
