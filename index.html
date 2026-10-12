@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeminiChat Studio | 프리미엄 Gemini 모델 채팅 워크스페이스</title>
+  <meta name="description" content="Gemini API 키만 입력하면 최신 Gemini Pro, Flash 등 원하는 모델을 골라 실시간 스트리밍으로 대화할 수 있는 강력한 웹앱">
+  <meta name="keywords" content="Gemini, Google AI, Gemini API, AI Chat, Gemini 2.5, LLM Studio">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <!-- Marked for Markdown Parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container" id="app">
+    <!-- 사이드바 오버레이 (모바일용) -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- 사이드바 -->
+    <aside class="sidebar" id="sidebar">
+      <!-- 로고 헤더 -->
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="url(#gemini-grad)"/>
+              <defs>
+                <linearGradient id="gemini-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#7928CA"/>
+                  <stop offset="0.5" stop-color="#4F8AFF"/>
+                  <stop offset="1" stop-color="#00DFD8"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">GeminiChat</span>
+            <span class="brand-tag">STUDIO</span>
+          </div>
+        </div>
+        <button class="icon-btn mobile-close-btn" id="closeSidebarBtn" aria-label="사이드바 닫기">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 새 대화 버튼 -->
+      <div class="sidebar-action">
+        <button class="btn btn-primary btn-new-chat" id="newChatBtn">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>새 대화 시작</span>
+        </button>
+      </div>
+
+      <!-- 모델 선택 섹션 -->
+      <div class="sidebar-section">
+        <div class="section-title-wrap">
+          <span class="section-title">AI 모델</span>
+          <button class="btn-refresh-models" id="refreshModelsBtn" title="모델 목록 새로고침">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M23 4v6h-6"></path>
+              <path d="M1 20v-6h6"></path>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="model-select-wrapper">
+          <select id="modelSelect" class="form-select" aria-label="Gemini 모델 선택">
+            <option value="" disabled selected>API 키 입력 후 로드됨</option>
+          </select>
+          <div class="model-meta-info" id="modelMetaInfo">
+            <span class="meta-badge" id="modelTypeBadge">자동 감지</span>
+            <span class="meta-desc" id="modelDesc">API 키를 설정하면 사용 가능한 모든 모델이 로드됩니다.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 대화 목록 (세션) -->
+      <div class="sidebar-section session-section">
+        <div class="section-title-wrap">
+          <span class="section-title">대화 기록</span>
+          <span class="session-count" id="sessionCount">0</span>
+        </div>
+        <div class="session-search-box">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="sessionSearchInput" placeholder="대화 검색..." aria-label="대화 기록 검색">
+        </div>
+        <div class="session-list" id="sessionList">
+          <!-- 세션 아이템 동적 렌더링 -->
+        </div>
+      </div>
+
+      <!-- 사이드바 하단: API 키 상태 및 설정 버튼 -->
+      <div class="sidebar-footer">
+        <div class="api-key-status-card" id="apiKeyStatusCard">
+          <div class="status-indicator-dot" id="statusDot"></div>
+          <div class="status-info">
+            <div class="status-label" id="apiKeyStatusLabel">API 키 미설정</div>
+            <div class="status-sub" id="apiKeyStatusSub">클릭하여 키 등록</div>
+          </div>
+          <button class="btn-key-edit" id="openApiKeyModalBtn" aria-label="API 키 설정">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M21 2l-2 2m-1.5 6.1L12 15.5l-4 1 1-4 5.4-5.5m5.1-4.9l-2-2m-2 2l2 2m-7 7l2 2"></path>
+              <circle cx="7.5" cy="16.5" r="3.5"></circle>
+            </svg>
+          </button>
+        </div>
+
+        <button class="footer-btn" id="openSettingsBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>생성 옵션 및 설정</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 메인 대화 영역 -->
+    <main class="main-content">
+      <!-- 상단 네비게이션 헤더 -->
+      <header class="main-header">
+        <div class="header-left">
+          <button class="icon-btn mobile-toggle-btn" id="toggleSidebarBtn" aria-label="메뉴 토글">
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <div class="active-session-title-wrap">
+            <h1 class="session-heading" id="currentSessionTitle">새 대화</h1>
+            <div class="active-model-tag" id="headerActiveModelTag">
+              <span class="pulse-indicator"></span>
+              <span id="activeModelName">모델 준비중</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <button class="btn btn-ghost" id="exportChatBtn" title="대화 내용 내보내기">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span class="btn-text-desktop">내보내기</span>
+          </button>
+
+          <button class="btn btn-ghost" id="clearChatBtn" title="현재 대화 내용 지우기">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span class="btn-text-desktop">지우기</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 메시지 스크롤 컨테이너 -->
+      <div class="chat-container" id="chatContainer">
+        <!-- 초기 웰컴 화면 (메시지가 없을 때 표시) -->
+        <div class="welcome-screen" id="welcomeScreen">
+          <div class="welcome-hero">
+            <div class="hero-aurora"></div>
+            <div class="hero-logo">
+              <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="url(#hero-gemini-grad)"/>
+                <defs>
+                  <linearGradient id="hero-gemini-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#9333ea"/>
+                    <stop offset="0.5" stop-color="#3b82f6"/>
+                    <stop offset="1" stop-color="#06b6d4"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <h2 class="welcome-title">무엇이든 Gemini에게 질문해보세요</h2>
+            <p class="welcome-subtitle">Google의 공식 API 키로 직접 통신하며, Pro, Flash, Thinking 등 지원하는 모든 모델을 골라 대화할 수 있습니다.</p>
+          </div>
+
+          <!-- API 키 미등록 안내 카드 -->
+          <div class="api-notice-card" id="welcomeApiKeyCard">
+            <div class="notice-icon">🔑</div>
+            <div class="notice-content">
+              <h3>시작하기 전 Gemini API 키가 필요합니다</h3>
+              <p>Google AI Studio에서 무료로 발급받은 API 키를 입력하면 모든 모델이 활성화됩니다. 키는 브라우저 로컬에만 안전하게 저장됩니다.</p>
+            </div>
+            <button class="btn btn-primary" id="welcomeOpenKeyBtn">API 키 등록하기</button>
+          </div>
+
+          <!-- 추천 프롬프트 카드 그리드 -->
+          <div class="prompt-suggestions">
+            <div class="suggestion-card" data-prompt="파이썬으로 비동기 웹 스크래퍼를 효율적이고 에러에 강하게 작성하는 예제 코드를 작성해줘.">
+              <div class="suggestion-icon">⚡</div>
+              <div class="suggestion-title">파이썬 비동기 스크래퍼 작성</div>
+              <div class="suggestion-desc">에러 핸들링과 성능 최적화가 포함된 실전 코드 예시</div>
+            </div>
+
+            <div class="suggestion-card" data-prompt="양자 컴퓨팅의 중첩과 얽힘 개념을 비전공자도 단번에 이해할 수 있게 쉬운 일상 비유로 설명해줘.">
+              <div class="suggestion-icon">💡</div>
+              <div class="suggestion-title">양자 컴퓨팅 개념 쉽게 설명</div>
+              <div class="suggestion-desc">중첩과 얽힘을 직관적인 일상 비유로 풀어서 해설</div>
+            </div>
+
+            <div class="suggestion-card" data-prompt="스타트업을 위한 주간 뉴스레터 기획안을 작성해줘. 매력적인 섹션 구성과 구독자 참여 유도 방안을 포함해줘.">
+              <div class="suggestion-icon">🚀</div>
+              <div class="suggestion-title">스타트업 뉴스레터 기획</div>
+              <div class="suggestion-desc">주간 콘텐츠 전략 및 클릭률을 높이는 섹션 구조 설계</div>
+            </div>
+
+            <div class="suggestion-card" data-prompt="2026년 최신 AI 기술 트렌드와 주요 오픈소스 모델 동향을 실시간 웹 검색해서 핵심 위주로 정리해줘.">
+              <div class="suggestion-icon">🌐</div>
+              <div class="suggestion-title">2026 최신 AI 동향 웹 검색</div>
+              <div class="suggestion-desc">Google 실시간 검색을 통해 최신 발표 모델 및 트렌드 조사</div>
+            </div>
+
+            <div class="suggestion-card" data-prompt="TypeScript에서 유용한 고급 유틸리티 타입 5가지를 실무 활용 예시와 함께 정리해줘.">
+              <div class="suggestion-icon">🛠️</div>
+              <div class="suggestion-title">TypeScript 고급 유틸리티 타입</div>
+              <div class="suggestion-desc">Conditional types, Infer 등을 활용한 실무 패턴</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 메시지 리스트 컨테이너 -->
+        <div class="messages-list" id="messagesList"></div>
+
+        <!-- 맨 아래로 스크롤 버튼 -->
+        <button class="scroll-bottom-btn" id="scrollBottomBtn" aria-label="맨 아래로 스크롤">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <polyline points="19 12 12 19 5 12"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 입력창 하단 바 -->
+      <footer class="input-area">
+        <div class="input-wrapper">
+          <div class="input-container">
+            <textarea
+              id="messageInput"
+              class="message-textarea"
+              placeholder="메시지를 입력하세요... (Shift+Enter 줄바꿈, Enter 전송)"
+              rows="1"
+              aria-label="채팅 메시지 입력"
+            ></textarea>
+
+            <div class="input-controls">
+              <div class="input-hints">
+                <button type="button" class="btn-toggle-search active" id="toggleWebSearchBtn" title="Google 실시간 웹 검색(Grounding) 켜기/끄기">
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                  </svg>
+                  <span id="webSearchBtnLabel">웹 검색 ON</span>
+                </button>
+                <span class="hint-separator">•</span>
+                <span id="charCount">0자</span>
+                <span class="hint-separator">•</span>
+                <span class="active-model-pill" id="inputModelIndicator">모델 미선택</span>
+              </div>
+
+              <div class="input-actions">
+                <!-- 생성 중단 버튼 (스트리밍 중 표시) -->
+                <button class="btn btn-stop hidden" id="stopGenerationBtn" title="생성 중단">
+                  <span class="stop-icon">■</span>
+                  <span>중단</span>
+                </button>
+
+                <!-- 전송 버튼 -->
+                <button class="btn btn-send" id="sendMessageBtn" title="메시지 전송" aria-label="전송">
+                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="footer-caption">
+            <span>Google 실시간 웹 검색(Grounding) 지원 • Gemini API 직통 통신 • 안전한 로컬 보관</span>
+          </div>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- API 키 모달 -->
+  <div class="modal-backdrop" id="apiKeyModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">🔑</div>
+          <h3>Gemini API 키 설정</h3>
+        </div>
+        <button class="icon-btn modal-close-btn" id="closeApiKeyModalBtn" aria-label="닫기">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-desc">
+          Google AI Studio(<a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com</a>)에서 발급받은 개인 API 키를 입력하세요. 입력 즉시 연결을 확인하고 지원되는 모든 최신 모델을 가져옵니다.
+        </p>
+
+        <div class="form-group">
+          <label for="apiKeyInput" class="form-label">API Key</label>
+          <div class="api-input-wrap">
+            <input
+              type="password"
+              id="apiKeyInput"
+              class="form-input"
+              placeholder="AIzaSy..."
+              autocomplete="off"
+              spellcheck="false"
+            >
+            <button class="btn-toggle-visibility" id="toggleApiKeyVisibility" type="button" aria-label="키 보이기/숨기기">
+              <svg id="eyeIcon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="api-key-validation-feedback" id="keyFeedback">
+          <!-- 검증 상태 메시지 -->
+        </div>
+
+        <div class="modal-security-tips">
+          <div class="tip-item">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="#4fdc98" stroke-width="2" fill="none">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            <span>클라이언트 단독 실행: 키는 외부 제3자 서버를 거치지 않고 Google API로 직접 전송됩니다.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="removeApiKeyBtn">키 삭제</button>
+        <button class="btn btn-primary" id="saveApiKeyBtn">
+          <span class="btn-spinner hidden" id="keySaveSpinner"></span>
+          <span>검증 및 저장</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 모델 파라미터 및 고급 설정 모달 -->
+  <div class="modal-backdrop" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">⚙️</div>
+          <h3>생성 파라미터 및 프롬프트 설정</h3>
+        </div>
+        <button class="icon-btn modal-close-btn" id="closeSettingsModalBtn" aria-label="닫기">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <!-- 시스템 프롬프트 -->
+        <div class="form-group">
+          <div class="label-with-value">
+            <label for="systemInstructionInput" class="form-label">시스템 지침 (System Instruction)</label>
+            <span class="param-hint">AI의 역할 및 응답 규칙 지정</span>
+          </div>
+          <textarea
+            id="systemInstructionInput"
+            class="form-textarea"
+            rows="3"
+            placeholder="예: 당신은 친절하고 전문적인 수석 소프트웨어 엔지니어입니다. 한국어로 답변하며 간결하고 정확한 코드를 제공하세요."
+          ></textarea>
+        </div>
+
+        <!-- Temperature -->
+        <div class="form-group">
+          <div class="label-with-value">
+            <label for="temperatureRange" class="form-label">Temperature (창의성)</label>
+            <span class="param-val" id="tempValueDisplay">1.0</span>
+          </div>
+          <input type="range" id="temperatureRange" class="form-range" min="0" max="2" step="0.05" value="1.0">
+          <div class="range-labels">
+            <span>정확·논리적 (0.0)</span>
+            <span>기본 균형 (1.0)</span>
+            <span>창의·자유로움 (2.0)</span>
+          </div>
+        </div>
+
+        <!-- Max Output Tokens -->
+        <div class="form-group">
+          <div class="label-with-value">
+            <label for="maxTokensInput" class="form-label">최대 출력 토큰 (Max Output Tokens)</label>
+            <span class="param-val" id="maxTokensValueDisplay">8192</span>
+          </div>
+          <input type="number" id="maxTokensInput" class="form-input" min="256" max="65536" step="256" value="8192">
+          <div class="param-desc">모델의 한 번 응답 시 최대 길이 제한 (일반적으로 4096 ~ 8192 권장)</div>
+        </div>
+
+        <!-- Top P -->
+        <div class="form-group">
+          <div class="label-with-value">
+            <label for="topPRange" class="form-label">Top P (핵심 샘플링)</label>
+            <span class="param-val" id="topPValueDisplay">0.95</span>
+          </div>
+          <input type="range" id="topPRange" class="form-range" min="0.1" max="1" step="0.05" value="0.95">
+        </div>
+
+        <!-- Google 실시간 웹 검색 (Grounding) -->
+        <div class="form-group">
+          <div class="label-with-value">
+            <label for="webSearchModalCheckbox" class="form-label">Google 실시간 웹 검색 (Grounding)</label>
+            <label class="switch-toggle-label">
+              <input type="checkbox" id="webSearchModalCheckbox" checked>
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="param-desc">최신 정보나 실시간 뉴스가 필요한 질문에 Google 검색을 직접 수행하여 정확한 답변과 출처 링크를 제공합니다.</div>
+        </div>
+
+        <!-- 데이터 관리 -->
+        <div class="form-group danger-zone">
+          <label class="form-label text-danger">로컬 데이터 관리</label>
+          <div class="danger-actions">
+            <button class="btn btn-outline-danger" id="clearAllHistoryBtn">모든 대화 기록 초기화</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="resetSettingsBtn">기본값 복원</button>
+        <button class="btn btn-primary" id="saveSettingsBtn">설정 적용</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 토스트 알림 컨테이너 -->
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <!-- 메인 스크립트 -->
+  <script src="app.js"></script>
+</body>
+</html>
