@@ -232,7 +232,7 @@ class HubGuiDashboard:
 
         # RiroSchool
         riro = self.plugin_manager.get_plugin("riroschool")
-        if riro and riro.enabled:
+        if riro:
             st = riro.get_status()
             if st.get("authenticated"):
                 u_name = st.get("user", {}).get("user_name", "인증됨")
@@ -244,7 +244,7 @@ class HubGuiDashboard:
 
         # NEIS
         neis = self.plugin_manager.get_plugin("neis")
-        if neis and neis.enabled:
+        if neis:
             st = neis.get_status()
             k_type = "정식 인증키 (1~7교시)" if st.get("key_type") == "authenticated" else "체험키 (1~5교시)"
             self.neis_status_lbl.config(text=f"● {k_type}", fg=self.c_green)
