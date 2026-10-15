@@ -1936,19 +1936,24 @@ ${att.data}` });
     if (!dom.hubServerStatusText) return;
     dom.hubServerStatusText.textContent = '연결 확인 중...';
     dom.hubServerStatusText.style.color = 'var(--text-dim)';
+    const curUrl = getHubServerUrl();
     try {
       const res = await fetch(getApiUrl('/api/status'), { cache: 'no-cache' });
       if (res.ok) {
         const data = await res.json();
-        dom.hubServerStatusText.textContent = `🟢 연결됨 (${data.active_plugins || 0}개 플러그인, ${data.tools_count || 0}개 도구 활성)`;
-        dom.hubServerStatusText.style.color = '#10b981';
+        const modeText = curUrl.startsWith('https://') ? '원격 HTTPS' : '로컬';
+        dom.hubServerStatusText.innerHTML = `<span style="color:#10b981;">🟢 연결됨 (${modeText})</span> <span style="font-size:0.75rem; color:var(--text-dim);">(${data.active_plugins || 0}개 플러그인, ${data.tools_count || 0}개 도구)</span>`;
+        return;
       } else {
         dom.hubServerStatusText.textContent = '🔴 HTTP ' + res.status + ' 오류';
         dom.hubServerStatusText.style.color = '#ef4444';
       }
     } catch (_) {
-      dom.hubServerStatusText.textContent = '🔴 미연결 (서버 PC 실행 필요)';
-      dom.hubServerStatusText.style.color = '#ef4444';
+      if (window.location.protocol === 'https:' && curUrl.startsWith('http://')) {
+        dom.hubServerStatusText.innerHTML = `<span style="color:#f59e0b;">⚠️ 보안(HTTPS) 차단됨</span> <span style="font-size:0.75rem; color:var(--text-dim);">(서버의 https:// 터널 링크 사용 필요)</span>`;
+      } else {
+        dom.hubServerStatusText.innerHTML = `<span style="color:#ef4444;">🔴 미연결</span> <span style="font-size:0.75rem; color:var(--text-dim);">(서버 PC에서 GeminiHubServer.exe 실행 필요)</span>`;
+      }
     }
   }
 
@@ -2575,17 +2580,24 @@ ${att.data}` });
     dom.pluginsListContainer.innerHTML = '';
 
     if (!state.serverAvailable) {
-      dom.pluginsListContainer.innerHTML = `
-        <div class="empty-plugins-state" style="padding:20px; text-align:center; color:var(--text-dim);">
-          <p>⚠️ 로컬 허브 서버(server.py)가 실행되지 않은 상태입니다.</p>
-          <p style="font-size:0.75rem; margin-top:6px;">서버 PC에서 <code>python server.py</code> 또는 <code>GeminiHubServer.exe</code>를 실행하면 리로스쿨 도구가 활성화됩니다.</p>
+      const noticeDiv = document.createElement('div');
+      noticeDiv.className = 'empty-plugins-state';
+      noticeDiv.style.cssText = 'padding:14px 18px; margin-bottom:14px; text-align:left; background:rgba(137,180,250,0.06); border-radius:10px; border:1px solid rgba(137,180,250,0.2);';
+      noticeDiv.innerHTML = `
+        <div style="font-weight:700; color:#89b4fa; font-size:0.92rem; display:flex; align-items:center; gap:6px;">
+          <span>🌐</span><span>나이스(NEIS) 직접 연동 활성 (시간표·급식·일정)</span>
         </div>
+        <p style="font-size:0.8rem; color:var(--text-color); margin:6px 0 0 0; line-height:1.5;">
+          현재 <strong>1~7교시 시간표, 학사일정, 오늘 급식(중식/석식)</strong>이 브라우저 직접 통신(CORS)으로 100% 정상 작동 중입니다.
+        </p>
+        <p style="font-size:0.75rem; color:var(--text-dim); margin:6px 0 0 0;">
+          💡 리로스쿨 비공개 기능(공지, 과제, 성적)을 외부에서 연동하시려면, 집 PC에서 <code>GeminiHubServer.exe</code>를 켜고 대시보드의 <strong>[원클릭 외부 연동 링크 복사]</strong>를 열어주세요.
+        </p>
       `;
-      return;
+      dom.pluginsListContainer.appendChild(noticeDiv);
     }
 
-    if (state.plugins.length === 0) {
-      dom.pluginsListContainer.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim);">등록된 플러그인이 없습니다.</div>';
+    if (!state.plugins || state.plugins.length === 0) {
       return;
     }
 

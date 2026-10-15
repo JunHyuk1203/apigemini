@@ -6,3 +6,5 @@ __pycache__/
 build/
 GeminiHubServer.spec
 session.json
+cloudflared.exe
+dist/cloudflared.exe

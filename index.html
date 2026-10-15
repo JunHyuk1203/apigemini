@@ -494,12 +494,15 @@
               type="text"
               id="hubServerUrlInput"
               class="form-input"
-              placeholder="예: http://localhost:8000 또는 http://192.168.0.x:8000"
+              placeholder="예: https://xxxx.trycloudflare.com 또는 http://localhost:8000"
               style="flex: 1;"
             >
             <button type="button" class="btn btn-secondary" id="testHubServerBtn" style="white-space: nowrap; padding: 0 14px;">연결 테스트</button>
           </div>
-          <div class="param-desc">GitHub Pages에서 채팅할 때 백엔드로 동작하는 GeminiHubServer.exe 주소입니다. (기본 로컬 실행 시 비워두거나 기본값 사용)</div>
+          <div class="param-desc" style="line-height: 1.5; margin-top: 6px;">
+            <div>• <strong>로컬 접속 시</strong>: <code>http://localhost:8000</code> 사용</div>
+            <div>• <strong>GitHub Pages / 외부 접속 시</strong>: 서버 프로그램 대시보드의 <strong>[원클릭 외부 연동 링크 복사]</strong> 버튼을 누르면 자동 입력되며, <code>https://xxxx.trycloudflare.com</code> 형식의 보안 터널 주소가 사용됩니다.</div>
+          </div>
         </div>
 
         <!-- 데이터 관리 -->

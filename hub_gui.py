@@ -1,7 +1,7 @@
 """
 Gemini Chat Studio - Hub Server Desktop GUI Dashboard
 Provides a clean, native desktop monitoring window for GeminiHubServer.exe.
-Shows live status, active plugins, system stats, open browser button, and live logs.
+Includes Cloudflare HTTPS Tunneling for seamless remote / GitHub Pages access.
 """
 import os
 import sys
@@ -11,11 +11,15 @@ import threading
 import queue
 import logging
 import webbrowser
+import subprocess
+import re
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from typing import Optional, Dict, Any
 
 import psutil
+
+GITHUB_PAGES_BASE = "https://junhyuk1203.github.io/apigemini/"
 
 
 class QueueLogHandler(logging.Handler):
@@ -32,6 +36,90 @@ class QueueLogHandler(logging.Handler):
             self.handleError(record)
 
 
+class CloudflareTunnelManager:
+    """Manages cloudflared tunnel to provide free public HTTPS URL."""
+    def __init__(self, port: int, on_url_ready=None, on_log=None):
+        self.port = port
+        self.on_url_ready = on_url_ready
+        self.on_log = on_log
+        self.process = None
+        self.tunnel_url = None
+        self.is_running = False
+
+    def find_executable(self) -> Optional[str]:
+        candidates = [
+            os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "cloudflared.exe"),
+            os.path.join(os.getcwd(), "cloudflared.exe"),
+            os.path.join(os.getcwd(), "dist", "cloudflared.exe"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloudflared.exe"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", "cloudflared.exe"),
+            os.path.expanduser("~/.cloudflared/cloudflared.exe"),
+            "cloudflared.exe"
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        return None
+
+    def start(self):
+        exe_file = self.find_executable()
+        if not exe_file:
+            if self.on_log:
+                self.on_log("[TUNNEL] cloudflared.exe를 찾을 수 없습니다. 외부 HTTPS 터널이 비활성화됩니다.")
+            return
+
+        self.is_running = True
+        self.tunnel_url = None
+        threading.Thread(target=self._run, args=(exe_file,), daemon=True).start()
+
+    def _run(self, exe_file: str):
+        try:
+            if self.on_log:
+                self.on_log("[TUNNEL] Cloudflare HTTPS 터널 연결을 시작합니다...")
+
+            cmd = [exe_file, "tunnel", "--url", f"http://localhost:{self.port}"]
+            startupinfo = None
+            if sys.platform.startswith("win"):
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                startupinfo=startupinfo
+            )
+
+            for line in iter(self.process.stdout.readline, ""):
+                if not self.is_running:
+                    break
+                line_str = line.strip()
+                if "trycloudflare.com" in line_str:
+                    m = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line_str)
+                    if m and not self.tunnel_url:
+                        self.tunnel_url = m.group(0)
+                        if self.on_log:
+                            self.on_log(f"[TUNNEL] 외부 HTTPS 주소 발급 완료: {self.tunnel_url}")
+                        if self.on_url_ready:
+                            self.on_url_ready(self.tunnel_url)
+
+        except Exception as e:
+            if self.on_log:
+                self.on_log(f"[TUNNEL] 오류 발생: {e}")
+
+    def stop(self):
+        self.is_running = False
+        if self.process:
+            try:
+                self.process.terminate()
+            except Exception:
+                pass
+            self.process = None
+
+
 class HubGuiDashboard:
     """Native Tkinter Desktop Dashboard for Gemini Hub Server."""
 
@@ -42,6 +130,7 @@ class HubGuiDashboard:
         self.on_close_callback = on_close_callback
         self.log_queue = queue.Queue()
         self.is_running = True
+        self.tunnel_url = None
 
         # Setup Logging redirection
         self.handler = QueueLogHandler(self.log_queue)
@@ -51,11 +140,22 @@ class HubGuiDashboard:
 
         self._init_window()
 
+        # Start Cloudflare Tunnel
+        self.tunnel_manager = CloudflareTunnelManager(
+            port=self.port,
+            on_url_ready=self._on_tunnel_url_ready,
+            on_log=self._log_internal
+        )
+        self.tunnel_manager.start()
+
+    def _log_internal(self, msg: str):
+        self.log_queue.put(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
     def _init_window(self):
         self.root = tk.Tk()
         self.root.title("Gemini Chat Studio - 마산중앙고 AI 허브 서버")
-        self.root.geometry("780x560")
-        self.root.minsize(700, 480)
+        self.root.geometry("820x620")
+        self.root.minsize(740, 520)
 
         # Dark Modern Palette
         self.c_bg = "#181825"
@@ -64,12 +164,12 @@ class HubGuiDashboard:
         self.c_dim = "#a6adc8"
         self.c_green = "#a6e3a1"
         self.c_blue = "#89b4fa"
+        self.c_purple = "#cba6f7"
         self.c_border = "#313244"
         self.c_btn = "#45475a"
 
         self.root.configure(bg=self.c_bg)
 
-        # Window Icon (fallback safe)
         try:
             self.root.iconbitmap(default="")
         except Exception:
@@ -85,6 +185,7 @@ class HubGuiDashboard:
 
         # Main Layout
         self._build_header()
+        self._build_tunnel_card()
         self._build_services_panel()
         self._build_logs_section()
         self._build_footer()
@@ -97,8 +198,8 @@ class HubGuiDashboard:
         self.root.after(1000, self._update_system_stats)
 
     def _build_header(self):
-        header = tk.Frame(self.root, bg=self.c_card, padx=18, pady=14, relief="flat", highlightbackground=self.c_border, highlightthickness=1)
-        header.pack(fill="x", padx=14, pady=(14, 8))
+        header = tk.Frame(self.root, bg=self.c_card, padx=18, pady=12, relief="flat", highlightbackground=self.c_border, highlightthickness=1)
+        header.pack(fill="x", padx=14, pady=(12, 6))
 
         # Left: Title & Status
         left_box = tk.Frame(header, bg=self.c_card)
@@ -108,58 +209,138 @@ class HubGuiDashboard:
         title_lbl.pack(anchor="w")
 
         status_box = tk.Frame(left_box, bg=self.c_card)
-        status_box.pack(anchor="w", pady=(4, 0))
+        status_box.pack(anchor="w", pady=(3, 0))
 
         self.status_dot = tk.Label(status_box, text="●", bg=self.c_card, fg=self.c_green, font=("Malgun Gothic", 12))
         self.status_dot.pack(side="left")
 
-        self.status_text = tk.Label(status_box, text=f"정상 작동 중 (Online) - 포트 {self.port}", bg=self.c_card, fg=self.c_green, font=("Malgun Gothic", 9, "bold"))
+        self.status_text = tk.Label(status_box, text=f"정상 작동 중 (Online) - 로컬 포트 {self.port}", bg=self.c_card, fg=self.c_green, font=("Malgun Gothic", 9, "bold"))
         self.status_text.pack(side="left", padx=4)
 
         self.url_label = tk.Label(status_box, text=f"http://localhost:{self.port}", bg=self.c_card, fg=self.c_blue, cursor="hand2", font=("Malgun Gothic", 9, "underline"))
         self.url_label.pack(side="left", padx=8)
         self.url_label.bind("<Button-1>", lambda e: self.open_browser())
 
-        # Right: Open Browser Big Button
+        # Right: Open Local Browser Button
         right_box = tk.Frame(header, bg=self.c_card)
         right_box.pack(side="right", fill="y")
 
         open_btn = tk.Button(
             right_box,
-            text="🌐 웹 브라우저 열기",
+            text="🌐 로컬 웹 열기",
             bg=self.c_blue,
             fg="#11111b",
-            font=("Malgun Gothic", 10, "bold"),
+            font=("Malgun Gothic", 9, "bold"),
             relief="flat",
-            padx=14,
-            pady=6,
+            padx=12,
+            pady=5,
             cursor="hand2",
             activebackground="#b4befe",
             command=self.open_browser
         )
         open_btn.pack(side="right")
 
+    def _build_tunnel_card(self):
+        """Card for External HTTPS Tunneling (Supports Remote & GitHub Pages)."""
+        card = tk.Frame(self.root, bg=self.c_card, padx=16, pady=10, relief="flat", highlightbackground="#89b4fa", highlightthickness=1)
+        card.pack(fill="x", padx=14, pady=(0, 6))
+
+        top_row = tk.Frame(card, bg=self.c_card)
+        top_row.pack(fill="x")
+
+        tk.Label(top_row, text="⚡ 외부 및 스마트폰 접속 (GitHub Pages & 외부 PC 연동)", bg=self.c_card, fg=self.c_purple, font=("Malgun Gothic", 10, "bold")).pack(side="left")
+
+        # Tunnel Status Label
+        self.tunnel_status_lbl = tk.Label(top_row, text="⏳ Cloudflare HTTPS 터널 연결 중...", bg=self.c_card, fg=self.c_dim, font=("Malgun Gothic", 8))
+        self.tunnel_status_lbl.pack(side="left", padx=8)
+
+        # Action Buttons on Right
+        btn_box = tk.Frame(card, bg=self.c_card)
+        btn_box.pack(fill="x", pady=(6, 0))
+
+        self.tunnel_url_display = tk.Label(btn_box, text="터널 주소 생성 중...", bg=self.c_card, fg="#89b4fa", font=("Consolas", 9))
+        self.tunnel_url_display.pack(side="left")
+
+        self.copy_link_btn = tk.Button(
+            btn_box,
+            text="📋 원클릭 외부 연동 링크 복사",
+            bg=self.c_purple,
+            fg="#11111b",
+            font=("Malgun Gothic", 8, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            state="disabled",
+            command=self._copy_external_link
+        )
+        self.copy_link_btn.pack(side="right", padx=(6, 0))
+
+        self.open_github_btn = tk.Button(
+            btn_box,
+            text="🌐 깃허브 웹 열기",
+            bg="#a6e3a1",
+            fg="#11111b",
+            font=("Malgun Gothic", 8, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            state="disabled",
+            command=self._open_github_with_tunnel
+        )
+        self.open_github_btn.pack(side="right")
+
+    def _on_tunnel_url_ready(self, url: str):
+        self.tunnel_url = url
+        self.root.after(0, self._update_tunnel_ui, url)
+
+    def _update_tunnel_ui(self, url: str):
+        self.tunnel_status_lbl.config(text="● HTTPS 터널 활성", fg=self.c_green)
+        self.tunnel_url_display.config(text=f"터널 주소: {url}")
+        self.copy_link_btn.config(state="normal")
+        self.open_github_btn.config(state="normal")
+
+    def _copy_external_link(self):
+        if not self.tunnel_url:
+            return
+        link = f"{GITHUB_PAGES_BASE}?server={self.tunnel_url}"
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(link)
+            self.root.update()
+            self.copy_link_btn.config(text="✓ 링크 복사 완료!")
+            self.root.after(2000, lambda: self.copy_link_btn.config(text="📋 원클릭 외부 연동 링크 복사"))
+        except Exception:
+            pass
+
+    def _open_github_with_tunnel(self):
+        if not self.tunnel_url:
+            return
+        link = f"{GITHUB_PAGES_BASE}?server={self.tunnel_url}"
+        webbrowser.open(link)
+
     def _build_services_panel(self):
         panel = tk.Frame(self.root, bg=self.c_bg)
-        panel.pack(fill="x", padx=14, pady=4)
+        panel.pack(fill="x", padx=14, pady=2)
 
         # 3 Service Cards (RiroSchool, NEIS, System)
-        card_riro = tk.Frame(panel, bg=self.c_card, padx=12, pady=10, highlightbackground=self.c_border, highlightthickness=1)
-        card_riro.pack(side="left", fill="both", expand=True, padx=(0, 6))
+        card_riro = tk.Frame(panel, bg=self.c_card, padx=12, pady=8, highlightbackground=self.c_border, highlightthickness=1)
+        card_riro.pack(side="left", fill="both", expand=True, padx=(0, 5))
 
         tk.Label(card_riro, text="🏫 마산중앙고 리로스쿨", bg=self.c_card, fg=self.c_text, font=("Malgun Gothic", 9, "bold")).pack(anchor="w")
         self.riro_status_lbl = tk.Label(card_riro, text="확인 중...", bg=self.c_card, fg=self.c_dim, font=("Malgun Gothic", 8))
         self.riro_status_lbl.pack(anchor="w", pady=(2, 0))
 
-        card_neis = tk.Frame(panel, bg=self.c_card, padx=12, pady=10, highlightbackground=self.c_border, highlightthickness=1)
-        card_neis.pack(side="left", fill="both", expand=True, padx=4)
+        card_neis = tk.Frame(panel, bg=self.c_card, padx=12, pady=8, highlightbackground=self.c_border, highlightthickness=1)
+        card_neis.pack(side="left", fill="both", expand=True, padx=3)
 
         tk.Label(card_neis, text="🎓 교육부 나이스 (NEIS)", bg=self.c_card, fg=self.c_text, font=("Malgun Gothic", 9, "bold")).pack(anchor="w")
         self.neis_status_lbl = tk.Label(card_neis, text="확인 중...", bg=self.c_card, fg=self.c_dim, font=("Malgun Gothic", 8))
         self.neis_status_lbl.pack(anchor="w", pady=(2, 0))
 
-        card_sys = tk.Frame(panel, bg=self.c_card, padx=12, pady=10, highlightbackground=self.c_border, highlightthickness=1)
-        card_sys.pack(side="left", fill="both", expand=True, padx=(6, 0))
+        card_sys = tk.Frame(panel, bg=self.c_card, padx=12, pady=8, highlightbackground=self.c_border, highlightthickness=1)
+        card_sys.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         tk.Label(card_sys, text="💻 서버 하드웨어", bg=self.c_card, fg=self.c_text, font=("Malgun Gothic", 9, "bold")).pack(anchor="w")
         self.sys_status_lbl = tk.Label(card_sys, text="CPU: --% | RAM: --%", bg=self.c_card, fg=self.c_dim, font=("Malgun Gothic", 8))
@@ -169,9 +350,9 @@ class HubGuiDashboard:
 
     def _build_logs_section(self):
         log_frame = tk.Frame(self.root, bg=self.c_card, highlightbackground=self.c_border, highlightthickness=1)
-        log_frame.pack(fill="both", expand=True, padx=14, pady=(6, 8))
+        log_frame.pack(fill="both", expand=True, padx=14, pady=(6, 6))
 
-        log_header = tk.Frame(log_frame, bg=self.c_card, padx=12, pady=6)
+        log_header = tk.Frame(log_frame, bg=self.c_card, padx=12, pady=5)
         log_header.pack(fill="x")
 
         tk.Label(log_header, text="📜 실시간 서버 활동 및 도구 호출 로그", bg=self.c_card, fg=self.c_text, font=("Malgun Gothic", 9, "bold")).pack(side="left")
@@ -199,7 +380,7 @@ class HubGuiDashboard:
 
         hint_lbl = tk.Label(
             footer,
-            text="💡 웹 화면은 브라우저에서 http://localhost:8000 으로 바로 사용하실 수 있습니다.",
+            text="💡 스마트폰이나 학교 PC에서는 [원클릭 외부 연동 링크]를 열어주시면 1초 만에 바로 연동됩니다.",
             bg=self.c_bg,
             fg=self.c_dim,
             font=("Malgun Gothic", 8)
@@ -281,6 +462,8 @@ class HubGuiDashboard:
 
     def on_close(self):
         self.is_running = False
+        if self.tunnel_manager:
+            self.tunnel_manager.stop()
         if self.on_close_callback:
             try:
                 self.on_close_callback()
