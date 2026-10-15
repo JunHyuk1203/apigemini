@@ -17,8 +17,124 @@
     SESSIONS: 'gemini_chat_sessions',
     ACTIVE_SESSION: 'gemini_chat_active_session_id',
     SETTINGS: 'gemini_chat_settings',
-    WEB_SEARCH: 'gemini_chat_web_search'
+    WEB_SEARCH: 'gemini_chat_web_search',
+    HUB_SERVER_URL: 'gemini_hub_server_url'
   };
+
+  // --------------------------------------------------------------------------
+  // Hub Server URL Resolver (Supports GitHub Pages & Remote Hosting)
+  // --------------------------------------------------------------------------
+  function getHubServerUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const qServer = params.get('server') || params.get('hub');
+    if (qServer) {
+      const clean = qServer.trim().replace(/\/+$/, '');
+      localStorage.setItem(STORAGE_KEYS.HUB_SERVER_URL, clean);
+      return clean;
+    }
+    const saved = localStorage.getItem(STORAGE_KEYS.HUB_SERVER_URL);
+    if (saved && saved.trim()) {
+      return saved.trim().replace(/\/+$/, '');
+    }
+    if (window.DEFAULT_HUB_SERVER) {
+      return window.DEFAULT_HUB_SERVER.replace(/\/+$/, '');
+    }
+    // If running on GitHub Pages or custom domain, default to http://localhost:8000
+    if (window.location.hostname.endsWith('github.io') || (!window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1') && window.location.port !== '8000')) {
+      return 'http://localhost:8000';
+    }
+    return '';
+  }
+
+  function getApiUrl(endpoint) {
+    const base = getHubServerUrl();
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+    return base ? `${base}${cleanEndpoint}` : cleanEndpoint;
+  }
+
+  // --------------------------------------------------------------------------
+  // Tool Results Markdown Fallback Formatter (Guarantees No Empty Responses!)
+  // --------------------------------------------------------------------------
+  function formatToolResultsFallback(executedTools) {
+    if (!executedTools || executedTools.length === 0) {
+      return '요청하신 작업을 처리했습니다.';
+    }
+
+    let md = '### 📋 조회 결과\n\n';
+    for (const item of executedTools) {
+      const { name, displayName, output } = item;
+      if (!output) continue;
+
+      // 1. NEIS Timetable
+      if (name.includes('timetable') && output.timetable) {
+        md += `**🏫 ${output.school || '마산중앙고등학교'} ${output.grade || 1}학년 ${output.class_num || 1}반 시간표**\n\n`;
+        if (output.timetable.length === 0) {
+          md += `*해당 일자의 시간표 정보가 없거나 주말/공휴일입니다.*\n\n`;
+        } else {
+          md += `| 날짜 | 교시 | 과목 |\n| :--- | :---: | :--- |\n`;
+          output.timetable.forEach(t => {
+            md += `| ${t.date} | ${t.period} | **${t.subject}** |\n`;
+          });
+          md += '\n';
+        }
+        if (output.auth_notice) {
+          md += `> 💡 *${output.auth_notice}*\n\n`;
+        }
+        continue;
+      }
+
+      // 2. NEIS School Schedule
+      if (name.includes('school_schedule') && output.schedules) {
+        md += `**📅 ${output.school || '마산중앙고등학교'} 학사일정 (${output.from_date || ''} ~ ${output.to_date || ''})**\n\n`;
+        if (output.schedules.length === 0) {
+          md += `*해당 기간에 등록된 학사일정이 없습니다.*\n\n`;
+        } else {
+          output.schedules.forEach(s => {
+            const hBadge = (s.holiday_type && s.holiday_type !== '해당없음') ? ` \`[${s.holiday_type}]\`` : '';
+            md += `- **${s.date}**: **${s.event_name}**${hBadge} (${s.target_grades || '전학년'})\n`;
+          });
+          md += '\n';
+        }
+        continue;
+      }
+
+      // 3. RiroSchool Meals
+      if (name.includes('meal')) {
+        md += `**🍴 급식 식단표**\n\n`;
+        if (output.lunch) md += `* **중식**: ${output.lunch}\n`;
+        if (output.dinner) md += `* **석식**: ${output.dinner}\n`;
+        if (output.calorie) md += `* **칼로리**: ${output.calorie}\n`;
+        if (output.meals && Array.isArray(output.meals)) {
+          output.meals.forEach(m => {
+            md += `* **${m.date} (${m.type})**: ${m.menu} (${m.calorie || ''})\n`;
+          });
+        }
+        md += '\n';
+        continue;
+      }
+
+      // 4. RiroSchool Notices
+      if (name.includes('notice') && output.notices) {
+        md += `**📢 공지사항 목록**\n\n`;
+        output.notices.forEach(n => {
+          md += `- [${n.date || ''}] **${n.title}** (${n.author || ''})\n`;
+        });
+        md += '\n';
+        continue;
+      }
+
+      // 5. System Status
+      if (name.includes('system') || name.includes('server')) {
+        md += `**💻 서버 상태**: ${output.status || 'online'} (CPU: ${output.cpu_percent || 0}%, RAM: ${output.memory_percent || 0}%)\n\n`;
+        continue;
+      }
+
+      // Generic
+      md += `**${displayName || name}**:\n\`\`\`json\n${JSON.stringify(output, null, 2)}\n\`\`\`\n\n`;
+    }
+
+    return md.trim();
+  }
 
   const DEFAULT_SETTINGS = {
     temperature: 1.0,
@@ -28,6 +144,7 @@
   };
 
   const FALLBACK_MODELS = [
+    { name: 'gemini-4-argon', displayName: 'Gemini 4 Argon (최상위 프론티어)', description: 'Google DeepMind 최신 심층 추론 및 자율 에이전트 플래그십 모델', inputTokenLimit: 1048576 },
     { name: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', description: '최고의 추론 및 코딩 성능 플래그십 모델', inputTokenLimit: 2097152 },
     { name: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', description: '매우 빠르고 가벼우며 똑똑한 표준 모델', inputTokenLimit: 1048576 },
     { name: 'gemini-2.0-flash', displayName: 'Gemini 2.0 Flash', description: '차세대 고속 멀티모달 모델', inputTokenLimit: 1048576 },
@@ -52,7 +169,11 @@
     currentAbortController: null,
     searchQuery: '',
     attachedFiles: [],      // { name, type, data (base64 or text), mimeType, isImage }
-    thinkingBudget: 1       // 0=없음, 1=보통, 2=높음, 3=최대
+    thinkingBudget: 1,      // 0=없음, 1=보통, 2=높음, 3=최대
+    serverAvailable: false, // 로컬 허브 서버 연결 여부
+    plugins: [],            // 등록된 플러그인 목록
+    toolDeclarations: [],   // Gemini FunctionDeclaration 스키마
+    serverStatus: null      // 서버 상태 메타데이터
   };
 
   // ==========================================================================
@@ -144,6 +265,22 @@
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
     resetSettingsBtn: document.getElementById('resetSettingsBtn'),
     clearAllHistoryBtn: document.getElementById('clearAllHistoryBtn'),
+    hubServerUrlInput: document.getElementById('hubServerUrlInput'),
+    hubServerStatusText: document.getElementById('hubServerStatusText'),
+    testHubServerBtn: document.getElementById('testHubServerBtn'),
+
+    // Plugin Hub Elements
+    openPluginsBtn: document.getElementById('openPluginsBtn'),
+    pluginsModal: document.getElementById('pluginsModal'),
+    closePluginsModalBtn: document.getElementById('closePluginsModalBtn'),
+    savePluginsBtn: document.getElementById('savePluginsBtn'),
+    pluginActiveBadge: document.getElementById('pluginActiveBadge'),
+    headerActivePluginTag: document.getElementById('headerActivePluginTag'),
+    activePluginText: document.getElementById('activePluginText'),
+    pluginsListContainer: document.getElementById('pluginsListContainer'),
+    serverConnectionText: document.getElementById('serverConnectionText'),
+    serverLanHint: document.getElementById('serverLanHint'),
+    quickPromptsChips: document.getElementById('quickPromptsChips'),
 
     // Toasts
     toastContainer: document.getElementById('toastContainer')
@@ -261,7 +398,7 @@
 
   function loadStateFromStorage() {
     state.apiKey = localStorage.getItem(STORAGE_KEYS.API_KEY) || '';
-    state.selectedModel = localStorage.getItem(STORAGE_KEYS.SELECTED_MODEL) || '';
+    state.selectedModel = localStorage.getItem(STORAGE_KEYS.SELECTED_MODEL) || 'gemini-4-argon';
 
     // Load Settings
     try {
@@ -375,9 +512,9 @@
             };
           });
 
-        // Priority sorting (Flash, Pro first)
+        // Priority sorting (Argon, Pro, Flash first)
         validModels.sort((a, b) => {
-          const priority = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-thinking-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'];
+          const priority = ['gemini-4-argon', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-thinking-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'];
           const idxA = priority.indexOf(a.name);
           const idxB = priority.indexOf(b.name);
           if (idxA !== -1 && idxB !== -1) return idxA - idxB;
@@ -550,6 +687,12 @@
     saveSessions();
     renderSessionList();
     renderCurrentChat();
+    dom.messagesList.innerHTML = '';
+    dom.messageInput.value = '';
+    state.attachedFiles = [];
+    renderAttachmentPreview();
+    adjustTextareaHeight();
+    updateCharCount();
     dom.messageInput.focus();
 
     // Close sidebar on mobile
@@ -685,6 +828,7 @@
     if (!session || session.messages.length === 0) {
       dom.welcomeScreen.classList.remove('hidden');
       dom.messagesList.classList.add('hidden');
+      dom.messagesList.innerHTML = '';
       dom.currentSessionTitle.textContent = '새 대화';
       dom.scrollBottomBtn.classList.remove('visible');
       return;
@@ -762,9 +906,10 @@
       attachmentDisplayHtml += '</div>';
     }
 
+    const badgesHtml = msg.toolBadges ? `<div class="tool-badges-container" style="margin-bottom:12px;">${msg.toolBadges}</div>` : '';
     const contentHtml = msg.role === 'user'
       ? `<div class="message-bubble">${attachmentDisplayHtml}${msg.content ? escapeHtml(msg.content).replace(/\n/g, '<br>') : ''}</div>`
-      : `<div class="message-bubble">${renderMarkdown(msg.content)}</div>`;
+      : `<div class="message-bubble">${badgesHtml}${renderMarkdown(msg.content)}</div>`;
 
 
     let actionsHtml = '';
@@ -1118,6 +1263,7 @@
       const titleText = rawText || (state.attachedFiles.length > 0 ? `[${state.attachedFiles[0].name}]` : '새 대화');
       session.title = titleText.length > 25 ? titleText.slice(0, 25) + '...' : titleText;
       dom.currentSessionTitle.textContent = session.title;
+      dom.messagesList.innerHTML = '';
     }
 
     // 1. Add User Message (with attachments snapshot)
@@ -1241,91 +1387,278 @@ ${att.data}` });
       generationConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 
-    const requestBody = {
-      contents: contentsPayload,
-      generationConfig: generationConfig
+    const TOOL_NAMES_KO = {
+      'riroschool_get_today_meal': '🍚 마산중앙고 오늘 급식 조회',
+      'riroschool_get_weekly_meals': '🍚 이번 주 전체 급식표 조회',
+      'riroschool_get_notices': '📢 리로스쿨 공지사항 검색',
+      'riroschool_get_notice_detail': '📢 공지사항 상세 본문 확인',
+      'riroschool_get_letters': '✉️ 가정통신문 조회',
+      'riroschool_get_assignments': '📝 수행평가 및 과제 마감 확인',
+      'riroschool_get_timetable': '📅 리로스쿨 시간표 조회',
+      'riroschool_get_scores': '📊 내신 및 모의고사 성적표 조회',
+      'riroschool_get_session_status': '🏫 리로스쿨 사용자 정보 확인',
+      'neis_get_school_schedule': '📅 마산중앙고 학사일정 조회 (나이스)',
+      'neis_get_timetable': '🕒 마산중앙고 정규 시간표 조회 (나이스)',
+      'neis_get_school_info': '🏫 마산중앙고 학교정보 조회 (나이스)',
+      'system_get_server_status': '💻 서버 PC 하드웨어 상태 확인',
+      'system_get_server_time': '⏰ 서버 시간 확인'
     };
-
-    // Google Search Grounding Tool
-    if (state.webSearchEnabled) {
-      requestBody.tools = [{ google_search: {} }];
-    }
-
-    // Add System Instruction if present
-    if (state.settings.systemInstruction && state.settings.systemInstruction.trim()) {
-      requestBody.systemInstruction = {
-        parts: [{ text: state.settings.systemInstruction.trim() }]
-      };
-    }
 
     let accumulatedText = '';
     let capturedGroundingMetadata = null;
+    let turn = 0;
+    const maxTurns = 4;
+    let badgesContainer = null;
+    let allExecutedTools = [];
+    let previousTurnText = '';
 
     try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody),
-        signal: state.currentAbortController.signal
-      });
+      while (turn < maxTurns) {
+        turn++;
 
-      if (!response.ok) {
-        let errMsg = `HTTP ${response.status}`;
-        try {
-          const errData = await response.json();
-          if (errData.error?.message) {
-            errMsg = errData.error.message;
-          }
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
+        const requestBody = {
+          contents: contentsPayload,
+          generationConfig: generationConfig
+        };
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // Keep unfinished tail line
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-
-          const jsonStr = trimmed.slice(6).trim();
-          if (!jsonStr || jsonStr === '[DONE]') continue;
-
-          try {
-            const data = JSON.parse(jsonStr);
-            const candidate = data.candidates?.[0];
-
-            if (candidate?.groundingMetadata) {
-              capturedGroundingMetadata = candidate.groundingMetadata;
-            }
-
-            const textPart = candidate?.content?.parts?.[0]?.text;
-            if (textPart) {
-              accumulatedText += textPart;
-              // Render with streaming cursor
-              bubbleElement.innerHTML = renderMarkdown(accumulatedText) + '<span class="stream-cursor"></span>';
-              scrollToBottom(false);
-            }
-          } catch (e) {
-            // Partial chunk ignore
-          }
+        // Tools injection: If pluggable service tools are active, use functionDeclarations!
+        if (state.toolDeclarations && state.toolDeclarations.length > 0) {
+          requestBody.tools = [{ functionDeclarations: state.toolDeclarations }];
+        } else if (state.webSearchEnabled) {
+          requestBody.tools = [{ google_search: {} }];
         }
-      }
 
-      // Final complete render
-      aiMsg.content = accumulatedText || '(응답이 비어 있습니다)';
+        // Add System Instruction if present
+        if (state.settings.systemInstruction && state.settings.systemInstruction.trim()) {
+          requestBody.systemInstruction = {
+            parts: [{ text: state.settings.systemInstruction.trim() }]
+          };
+        }
+
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody),
+          signal: state.currentAbortController.signal
+        });
+
+        if (!response.ok) {
+          let errMsg = `HTTP ${response.status}`;
+          try {
+            const errData = await response.json();
+            if (errData.error?.message) {
+              errMsg = errData.error.message;
+            }
+          } catch (_) {}
+          throw new Error(errMsg);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let detectedFunctionCalls = [];
+        let turnAccumulatedText = '';
+          let turnThoughtText = '';
+          let lastFinishReason = null;
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+              if (buffer && buffer.trim()) {
+                const lines = buffer.split('\n');
+                for (const line of lines) {
+                  const trimmed = line.trim();
+                  if (!trimmed.startsWith('data: ')) continue;
+                  const jsonStr = trimmed.slice(6).trim();
+                  if (!jsonStr || jsonStr === '[DONE]') continue;
+                  try {
+                    const data = JSON.parse(jsonStr);
+                    const candidate = data.candidates?.[0];
+                    if (candidate?.finishReason) lastFinishReason = candidate.finishReason;
+                    const parts = candidate?.content?.parts || [];
+                    for (const part of parts) {
+                      if (part.thought && part.text) turnThoughtText += part.text;
+                      if (part.text && !part.thought) {
+                        turnAccumulatedText += part.text;
+                        accumulatedText = turnAccumulatedText;
+                      }
+                      if (part.functionCall) {
+                        detectedFunctionCalls.push({
+                          call: part.functionCall,
+                          rawPart: JSON.parse(JSON.stringify(part))
+                        });
+                      }
+                    }
+                  } catch (_) {}
+                }
+              }
+              break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // Keep unfinished tail line
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith('data: ')) continue;
+
+              const jsonStr = trimmed.slice(6).trim();
+              if (!jsonStr || jsonStr === '[DONE]') continue;
+
+              try {
+                const data = JSON.parse(jsonStr);
+                const candidate = data.candidates?.[0];
+
+                if (candidate?.finishReason) {
+                  lastFinishReason = candidate.finishReason;
+                }
+
+                if (candidate?.groundingMetadata) {
+                  capturedGroundingMetadata = candidate.groundingMetadata;
+                }
+
+                const parts = candidate?.content?.parts || [];
+                for (const part of parts) {
+                  if (part.thought && part.text) {
+                    turnThoughtText += part.text;
+                  }
+
+                  // If it's a real response text
+                  if (part.text && !part.thought) {
+                    turnAccumulatedText += part.text;
+                    accumulatedText = turnAccumulatedText;
+                    const prefixHtml = badgesContainer ? badgesContainer.outerHTML : '';
+                    bubbleElement.innerHTML = prefixHtml + renderMarkdown(accumulatedText) + '<span class="stream-cursor"></span>';
+                    scrollToBottom(false);
+                  }
+
+                  if (part.functionCall) {
+                    detectedFunctionCalls.push({
+                      call: part.functionCall,
+                      rawPart: JSON.parse(JSON.stringify(part))
+                    });
+                  }
+                }
+              } catch (e) {
+                // Partial chunk ignore
+              }
+            }
+          }
+
+          // If Gemini requested function calls, execute them on the Hub Server!
+          if (detectedFunctionCalls.length > 0) {
+            if (!badgesContainer) {
+              badgesContainer = document.createElement('div');
+              badgesContainer.className = 'tool-badges-container';
+              badgesContainer.style.marginBottom = '12px';
+              bubbleElement.innerHTML = '';
+              bubbleElement.appendChild(badgesContainer);
+            }
+
+            // 1. Model turn with all requested function calls
+            contentsPayload.push({
+              role: 'model',
+              parts: detectedFunctionCalls.map(item => item.rawPart)
+            });
+
+            // 2. Execute each tool on Hub Server and collect responses
+            const userResponseParts = [];
+            for (const item of detectedFunctionCalls) {
+              const call = item.call;
+              const rawName = call.name;
+              const cleanName = rawName.replace(/^(default_api|tools?)[:_.]/, '');
+              const displayName = TOOL_NAMES_KO[cleanName] || TOOL_NAMES_KO[rawName] || `도구 호출: ${cleanName}`;
+
+              const badge = document.createElement('div');
+              badge.className = 'tool-call-badge running';
+              badge.innerHTML = `<span class="tool-spin-icon">⏳</span><span>${escapeHtml(displayName)} 실행 중...</span>`;
+              badgesContainer.appendChild(badge);
+              scrollToBottom(false);
+
+              let toolOutput = {};
+              try {
+                const execRes = await fetch(getApiUrl('/api/tools/execute'), {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: cleanName, args: call.args || {} })
+                });
+                const execData = await execRes.json();
+                if (execData.success) {
+                  toolOutput = execData.result;
+                  badge.className = 'tool-call-badge success';
+                  badge.innerHTML = `<span>✓</span><span>${escapeHtml(displayName)} 완료</span>`;
+                } else {
+                  toolOutput = { error: execData.error || '실행 실패' };
+                  badge.className = 'tool-call-badge error';
+                  badge.innerHTML = `<span>✕</span><span>${escapeHtml(displayName)} 실패: ${escapeHtml(execData.error || '')}</span>`;
+                }
+              } catch (err) {
+                toolOutput = { error: err.message };
+                badge.className = 'tool-call-badge error';
+                badge.innerHTML = `<span>✕</span><span>${escapeHtml(displayName)} 연결 오류</span>`;
+              }
+
+              allExecutedTools.push({
+                name: cleanName,
+                displayName: displayName,
+                output: toolOutput
+              });
+
+              userResponseParts.push({
+                functionResponse: {
+                  name: rawName,
+                  response: (typeof toolOutput === 'object' && toolOutput !== null) ? toolOutput : { output: toolOutput }
+                }
+              });
+            }
+
+            // 3. User turn with function responses
+            contentsPayload.push({
+              role: 'user',
+              parts: userResponseParts
+            });
+
+            // Keep prior text and reset for subsequent answer turn
+            previousTurnText = turnAccumulatedText || previousTurnText;
+            turnAccumulatedText = '';
+            turnThoughtText = '';
+            accumulatedText = '';
+            continue;
+          }
+
+          // No function calls, turn complete!
+          accumulatedText = turnAccumulatedText;
+
+          // If accumulatedText is empty, apply smart fallbacks so user never sees empty response!
+          if (!accumulatedText || !accumulatedText.trim()) {
+            if (allExecutedTools.length > 0) {
+              accumulatedText = formatToolResultsFallback(allExecutedTools);
+            } else if (turnThoughtText && turnThoughtText.trim()) {
+              accumulatedText = turnThoughtText.trim();
+            } else if (lastFinishReason === 'MAX_TOKENS') {
+              accumulatedText = '⚠️ *(생성 토큰 한도에 도달하여 응답이 종료되었습니다. 더 구체적인 질문으로 다시 시도해 주세요.)*';
+            } else if (lastFinishReason === 'SAFETY') {
+              accumulatedText = '⚠️ *(안전 정책에 의해 응답이 차단되었습니다.)*';
+            } else if (previousTurnText && previousTurnText.trim()) {
+              accumulatedText = previousTurnText.trim();
+            } else {
+              accumulatedText = '요청하신 작업을 완료했으나 추가 설명 텍스트가 없습니다.';
+            }
+          }
+          break;
+        }
+
+        // Final complete render
+        const prefixHtml = badgesContainer ? badgesContainer.outerHTML : '';
+        aiMsg.content = accumulatedText;
       aiMsg.groundingMetadata = capturedGroundingMetadata;
-      bubbleElement.innerHTML = renderMarkdown(aiMsg.content);
+      if (badgesContainer) {
+        aiMsg.toolBadges = badgesContainer.innerHTML;
+      }
+      bubbleElement.innerHTML = prefixHtml + renderMarkdown(aiMsg.content);
 
       if (capturedGroundingMetadata) {
         renderGroundingBox(bubbleElement, capturedGroundingMetadata);
@@ -1333,9 +1666,13 @@ ${att.data}` });
 
     } catch (err) {
       if (err.name === 'AbortError') {
+        const prefixHtml = badgesContainer ? badgesContainer.outerHTML : '';
         aiMsg.content = accumulatedText + '\n\n*(생성이 사용자에 의해 중단되었습니다)*';
         aiMsg.groundingMetadata = capturedGroundingMetadata;
-        bubbleElement.innerHTML = renderMarkdown(aiMsg.content);
+        if (badgesContainer) {
+          aiMsg.toolBadges = badgesContainer.innerHTML;
+        }
+        bubbleElement.innerHTML = prefixHtml + renderMarkdown(aiMsg.content);
         if (capturedGroundingMetadata) {
           renderGroundingBox(bubbleElement, capturedGroundingMetadata);
         }
@@ -1343,7 +1680,7 @@ ${att.data}` });
       } else {
         console.error('Gemini Stream Error:', err);
         let errorHelp = '';
-        if (state.webSearchEnabled && (err.message.includes('tool') || err.message.includes('google_search') || err.message.includes('unsupported'))) {
+        if (state.webSearchEnabled && (!state.toolDeclarations || state.toolDeclarations.length === 0) && (err.message.includes('tool') || err.message.includes('google_search') || err.message.includes('unsupported'))) {
           errorHelp = '\n\n💡 *안내: 현재 선택된 모델이 실시간 웹 검색 도구를 지원하지 않을 수 있습니다. 웹 검색 버튼을 끄거나 gemini-2.5-flash / gemini-2.5-pro 모델로 변경해 보세요.*';
         }
 
@@ -1492,7 +1829,32 @@ ${att.data}` });
     dom.topPRange.value = state.settings.topP;
     dom.topPValueDisplay.textContent = state.settings.topP;
 
+    if (dom.hubServerUrlInput) {
+      dom.hubServerUrlInput.value = localStorage.getItem(STORAGE_KEYS.HUB_SERVER_URL) || (window.DEFAULT_HUB_SERVER || '');
+      updateHubServerStatusDisplay();
+    }
+
     dom.settingsModal.classList.add('active');
+  }
+
+  async function updateHubServerStatusDisplay() {
+    if (!dom.hubServerStatusText) return;
+    dom.hubServerStatusText.textContent = '연결 확인 중...';
+    dom.hubServerStatusText.style.color = 'var(--text-dim)';
+    try {
+      const res = await fetch(getApiUrl('/api/status'), { cache: 'no-cache' });
+      if (res.ok) {
+        const data = await res.json();
+        dom.hubServerStatusText.textContent = `🟢 연결됨 (${data.active_plugins || 0}개 플러그인, ${data.tools_count || 0}개 도구 활성)`;
+        dom.hubServerStatusText.style.color = '#10b981';
+      } else {
+        dom.hubServerStatusText.textContent = '🔴 HTTP ' + res.status + ' 오류';
+        dom.hubServerStatusText.style.color = '#ef4444';
+      }
+    } catch (_) {
+      dom.hubServerStatusText.textContent = '🔴 미연결 (서버 PC 실행 필요)';
+      dom.hubServerStatusText.style.color = '#ef4444';
+    }
   }
 
   function closeSettingsModal() {
@@ -1505,8 +1867,18 @@ ${att.data}` });
     state.settings.maxOutputTokens = parseInt(dom.maxTokensInput.value, 10) || 8192;
     state.settings.topP = parseFloat(dom.topPRange.value);
 
+    if (dom.hubServerUrlInput) {
+      const serverVal = dom.hubServerUrlInput.value.trim().replace(/\/+$/, '');
+      if (serverVal) {
+        localStorage.setItem(STORAGE_KEYS.HUB_SERVER_URL, serverVal);
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.HUB_SERVER_URL);
+      }
+      checkHubServer();
+    }
+
     saveSettings();
-    showToast('생성 파라미터가 저장되었습니다.', 'success');
+    showToast('설정이 저장되었습니다.', 'success');
     closeSettingsModal();
   }
 
@@ -1836,6 +2208,55 @@ ${att.data}` });
         }
       });
     }
+    // Plugins Modal Listeners
+    if (dom.openPluginsBtn) {
+      dom.openPluginsBtn.addEventListener('click', openPluginsModal);
+    }
+    if (dom.closePluginsModalBtn) {
+      dom.closePluginsModalBtn.addEventListener('click', closePluginsModal);
+    }
+    if (dom.savePluginsBtn) {
+      dom.savePluginsBtn.addEventListener('click', closePluginsModal);
+    }
+    if (dom.pluginsModal) {
+      dom.pluginsModal.addEventListener('click', (e) => {
+        if (e.target === dom.pluginsModal) closePluginsModal();
+      });
+    }
+
+    // Quick Prompt Chips
+    if (dom.quickPromptsChips) {
+      dom.quickPromptsChips.querySelectorAll('.prompt-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const prompt = btn.getAttribute('data-prompt');
+          if (prompt && dom.messageInput) {
+            dom.messageInput.value = prompt;
+            adjustTextareaHeight();
+            updateCharCount();
+            closePluginsModal();
+            dom.messageInput.focus();
+          }
+        });
+      });
+    }
+
+    // Hub Server Connection Test Button
+    if (dom.testHubServerBtn) {
+      dom.testHubServerBtn.addEventListener('click', async () => {
+        if (dom.hubServerUrlInput) {
+          const val = dom.hubServerUrlInput.value.trim().replace(/\/+$/, '');
+          if (val) localStorage.setItem(STORAGE_KEYS.HUB_SERVER_URL, val);
+          else localStorage.removeItem(STORAGE_KEYS.HUB_SERVER_URL);
+        }
+        await updateHubServerStatusDisplay();
+        await checkHubServer();
+        if (state.serverAvailable) {
+          showToast('허브 서버에 성공적으로 연결되었습니다!', 'success');
+        } else {
+          showToast('허브 서버에 연결할 수 없습니다. 서버 PC에서 GeminiHubServer.exe가 켜져 있는지 확인해 주세요.', 'error');
+        }
+      });
+    }
 
     // Global Escape Key to close modals
     window.addEventListener('keydown', (e) => {
@@ -1844,7 +2265,179 @@ ${att.data}` });
         closeSettingsModal();
         closeModelPicker();
         closeSidebar();
+        closePluginsModal();
       }
+    });
+  }
+
+  // ==========================================================================
+  // 15.5 Pluggable Services & Hub Server Integration
+  // ==========================================================================
+
+  async function checkHubServer() {
+    try {
+      const res = await fetch(getApiUrl('/api/status'), { cache: 'no-cache' });
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (data.status === 'online') {
+        state.serverAvailable = true;
+        state.serverStatus = data;
+
+        // Fetch tool declarations and plugins
+        await refreshPluginsData();
+
+        // Update UI Badges
+        if (dom.pluginActiveBadge) {
+          dom.pluginActiveBadge.style.display = 'inline-block';
+        }
+        if (dom.headerActivePluginTag) {
+          dom.headerActivePluginTag.style.display = 'inline-flex';
+          if (dom.activePluginText) {
+            dom.activePluginText.textContent = `서비스 허브 (${state.plugins.length}개 연동)`;
+          }
+        }
+        if (dom.serverConnectionText) {
+          dom.serverConnectionText.textContent = `허브 서버 연결됨 (포트 ${data.port})`;
+        }
+        if (dom.serverLanHint && data.lan_urls && data.lan_urls.length > 0) {
+          dom.serverLanHint.textContent = `스마트폰 접속: ${data.lan_urls[0]}`;
+        }
+      }
+    } catch (_) {
+      // Hub server not present (standalone mode)
+      state.serverAvailable = false;
+      if (dom.pluginActiveBadge) dom.pluginActiveBadge.style.display = 'none';
+      if (dom.headerActivePluginTag) dom.headerActivePluginTag.style.display = 'none';
+    }
+  }
+
+  async function refreshPluginsData() {
+    try {
+      const [pluginsRes, declsRes] = await Promise.all([
+        fetch(getApiUrl('/api/plugins')),
+        fetch(getApiUrl('/api/tools/declarations'))
+      ]);
+
+      if (pluginsRes.ok) {
+        const pData = await pluginsRes.json();
+        state.plugins = pData.plugins || [];
+      }
+      if (declsRes.ok) {
+        const dData = await declsRes.json();
+        state.toolDeclarations = dData.declarations || [];
+      }
+    } catch (e) {
+      console.warn('Failed to refresh plugins data:', e);
+    }
+  }
+
+  function openPluginsModal() {
+    if (!dom.pluginsModal) return;
+    renderPluginsList();
+    dom.pluginsModal.classList.add('active');
+  }
+
+  function closePluginsModal() {
+    if (!dom.pluginsModal) return;
+    dom.pluginsModal.classList.remove('active');
+  }
+
+  function renderPluginsList() {
+    if (!dom.pluginsListContainer) return;
+    dom.pluginsListContainer.innerHTML = '';
+
+    if (!state.serverAvailable) {
+      dom.pluginsListContainer.innerHTML = `
+        <div class="empty-plugins-state" style="padding:20px; text-align:center; color:var(--text-dim);">
+          <p>⚠️ 로컬 허브 서버(server.py)가 실행되지 않은 상태입니다.</p>
+          <p style="font-size:0.75rem; margin-top:6px;">서버 PC에서 <code>python server.py</code> 또는 <code>GeminiHubServer.exe</code>를 실행하면 리로스쿨 도구가 활성화됩니다.</p>
+        </div>
+      `;
+      return;
+    }
+
+    if (state.plugins.length === 0) {
+      dom.pluginsListContainer.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim);">등록된 플러그인이 없습니다.</div>';
+      return;
+    }
+
+    state.plugins.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'plugin-card';
+
+      let userStatusHtml = '';
+      if (p.id === 'riroschool' && p.status && p.status.user) {
+        const u = p.status.user;
+        if (p.status.authenticated) {
+          userStatusHtml = `
+            <div class="plugin-meta-status">
+              <span>계정: <strong>${escapeHtml(u.user_name || '')} (${escapeHtml(u.user_type || '')})</strong></span>
+              ${u.grade ? `<span>학급: <strong>${u.grade}학년 ${u.class_num}반</strong></span>` : ''}
+              <span>상태: <strong style="color:#10b981;">인증 활성</strong></span>
+            </div>
+          `;
+        } else {
+          userStatusHtml = `
+            <div class="plugin-meta-status">
+              <span>상태: <strong style="color:#ef4444;">로그인 필요</strong></span>
+            </div>
+          `;
+        }
+      } else if (p.id === 'neis' && p.status) {
+        userStatusHtml = `
+          <div class="plugin-meta-status">
+            <span>대상 학교: <strong>${escapeHtml(p.status.school_name || '마산중앙고등학교')} (${escapeHtml(p.status.school_code || '9010094')})</strong></span>
+            <span>교육청: <strong>경상남도교육청 (${escapeHtml(p.status.office_code || 'S10')})</strong></span>
+            <span>연동 상태: <strong style="color:#10b981;">교육부 공공 오픈API 활성</strong></span>
+          </div>
+        `;
+      }
+
+      const toolsHtml = (p.tools || []).map(t =>
+        `<span class="plugin-tool-chip" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>`
+      ).join('');
+
+      card.innerHTML = `
+        <div class="plugin-card-header">
+          <div class="plugin-info-wrap">
+            <div class="plugin-icon-wrap">${p.icon || '🔌'}</div>
+            <div>
+              <div class="plugin-name-title">
+                <span>${escapeHtml(p.name)}</span>
+                <span class="plugin-ver-badge">v${escapeHtml(p.version || '1.0')}</span>
+              </div>
+              <div class="plugin-desc">${escapeHtml(p.description || '')}</div>
+            </div>
+          </div>
+          <label class="switch-toggle-label">
+            <input type="checkbox" class="plugin-toggle-checkbox" data-id="${p.id}" ${p.enabled ? 'checked' : ''}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+        ${userStatusHtml}
+        <div class="plugin-tools-tags">
+          ${toolsHtml}
+        </div>
+      `;
+
+      card.querySelector('.plugin-toggle-checkbox').addEventListener('change', async (e) => {
+        const checked = e.target.checked;
+        try {
+          await fetch(getApiUrl(`/api/plugins/${p.id}/toggle`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: checked })
+          });
+          p.enabled = checked;
+          await refreshPluginsData();
+          showToast(`${p.name} 플러그인이 ${checked ? '활성화' : '비활성화'}되었습니다.`, 'info');
+        } catch (err) {
+          showToast(`플러그인 설정 변경 실패: ${err.message}`, 'error');
+        }
+      });
+
+      dom.pluginsListContainer.appendChild(card);
     });
   }
 
@@ -1861,6 +2454,9 @@ ${att.data}` });
     populateModelDropdown();
     updateApiKeyStatusUI();
     updateWebSearchUI();
+
+    // Detect and connect to Gemini Hub Server (RiroSchool & other services)
+    checkHubServer().catch(() => {});
 
     // Initialize or load sessions
     if (state.sessions.length === 0) {

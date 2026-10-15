@@ -1,0 +1,31 @@
+# ==============================================================================
+# Gemini Chat Studio - Unified Hub Server Configuration
+# ==============================================================================
+
+server:
+  host: "0.0.0.0"       # 0.0.0.0으로 설정하면 같은 와이파이/네트워크의 스마트폰/태블릿에서도 접속 가능
+  port: 8000            # 서버 포트
+  open_browser: true    # 서버 실행 시 기본 웹 브라우저 자동 실행 여부
+  cors_allowed: true    # 외부/CORS 요청 허용
+  # 깃허브 페이지 연동 (비워두면 exe 내장 웹 화면 사용, 입력하면 서버 접속 시 깃허브 페이지의 최신 UI를 실시간으로 불러옴)
+  github_pages_url: "https://junhyuk1203.github.io/apigemini/"
+
+# 서비스 플러그인 설정
+plugins:
+  riroschool:
+    enabled: true
+    # 필요 시 자동 로그인을 위한 설정 (비워두면 기존 로컬 세션 자동 사용)
+    user_id: ""
+    password: ""
+    user_type: "1"      # 1: 학생/교원, 2: 학부모
+
+  system:
+    enabled: true       # 서버 PC 리소스 및 하드웨어 모니터링
+
+  neis:
+    enabled: true       # 교육부 나이스(NEIS) 공식 학사일정 및 고교 시간표 연동
+    api_key: "0c27c5193f7f45019e499af586e380f5" # 교육부 나이스 공식 인증키 (1~7교시 및 주간 시간표 전체 완전 조회)
+
+    office_code: "S10"  # 경상남도교육청 코드
+    school_code: "9010094" # 마산중앙고등학교 표준코드
+    school_name: "마산중앙고등학교"

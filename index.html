@@ -113,6 +113,15 @@
           </button>
         </div>
 
+        <button class="footer-btn" id="openPluginsBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.17-6.83l-2.83 2.83m-8 8l-2.83 2.83m0-13.66l2.83 2.83m8 8l2.83 2.83"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+          <span>서비스 플러그인 (리로스쿨)</span>
+          <span class="plugin-active-dot" id="pluginActiveBadge" style="display:none;"></span>
+        </button>
+
         <button class="footer-btn" id="openSettingsBtn">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
             <circle cx="12" cy="12" r="3"></circle>
@@ -140,6 +149,10 @@
             <div class="active-model-tag" id="headerActiveModelTag">
               <span class="pulse-indicator"></span>
               <span id="activeModelName">모델 준비중</span>
+            </div>
+            <div class="active-plugin-tag" id="headerActivePluginTag" style="display:none;" title="연동된 서비스 플러그인">
+              <span class="plugin-status-dot"></span>
+              <span id="activePluginText">리로스쿨 연동</span>
             </div>
           </div>
         </div>
@@ -470,6 +483,25 @@
           <div class="param-desc">최신 정보나 실시간 뉴스가 필요한 질문에 Google 검색을 직접 수행하여 정확한 답변과 출처 링크를 제공합니다.</div>
         </div>
 
+        <!-- 허브 서버 (봇) 연결 주소 (GitHub Pages 등 외부 호스팅 시 연동) -->
+        <div class="form-group">
+          <div class="label-with-value">
+            <label for="hubServerUrlInput" class="form-label">🤖 허브 서버 (봇) 주소</label>
+            <span class="param-hint" id="hubServerStatusText" style="font-weight: 600;">연결 확인 중...</span>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 6px;">
+            <input
+              type="text"
+              id="hubServerUrlInput"
+              class="form-input"
+              placeholder="예: http://localhost:8000 또는 http://192.168.0.x:8000"
+              style="flex: 1;"
+            >
+            <button type="button" class="btn btn-secondary" id="testHubServerBtn" style="white-space: nowrap; padding: 0 14px;">연결 테스트</button>
+          </div>
+          <div class="param-desc">GitHub Pages에서 채팅할 때 백엔드로 동작하는 GeminiHubServer.exe 주소입니다. (기본 로컬 실행 시 비워두거나 기본값 사용)</div>
+        </div>
+
         <!-- 데이터 관리 -->
         <div class="form-group danger-zone">
           <label class="form-label text-danger">로컬 데이터 관리</label>
@@ -526,6 +558,56 @@
           </svg>
           모델 목록 새로고침
         </button>
+      </div>
+    </div>
+  <!-- 서비스 플러그인 모달 -->
+  <div class="modal-backdrop" id="pluginsModal">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">🔌</div>
+          <h2 class="modal-title">통합 서비스 플러그인 허브</h2>
+        </div>
+        <button class="icon-btn modal-close-btn" id="closePluginsModalBtn" aria-label="닫기">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">
+          제미나이가 질문에 따라 실시간으로 호출할 수 있는 로컬 서비스 도구 목록입니다.
+          새로운 서비스는 <code>plugins/</code> 폴더에 Python 파일만 넣으면 자동으로 여기에 추가됩니다.
+        </p>
+
+        <div class="plugin-server-status-bar" id="pluginServerStatusBar">
+          <div class="server-status-pill online">
+            <span class="status-pulse-dot"></span>
+            <span id="serverConnectionText">로컬 허브 서버 연결됨 (포트 8000)</span>
+          </div>
+          <span class="server-lan-hint" id="serverLanHint"></span>
+        </div>
+
+        <div class="plugins-list-container" id="pluginsListContainer">
+          <!-- 동적 렌더링 -->
+        </div>
+
+        <div class="plugin-quick-prompts-section">
+          <span class="quick-prompts-title">💡 빠른 추천 질문 (클릭 시 입력창에 바로 삽입)</span>
+          <div class="quick-prompts-chips" id="quickPromptsChips">
+            <button class="prompt-chip" data-prompt="오늘 급식 뭐 나오는지 알려주고, 칼로리도 알려줘">🍚 오늘 급식 메뉴</button>
+            <button class="prompt-chip" data-prompt="이번 달 마산중앙고 학사일정(지필평가, 모의고사, 방학, 행사) 알려줘">📅 나이스 학사일정</button>
+            <button class="prompt-chip" data-prompt="오늘 마산중앙고 1학년 1반 정규 시간표 나이스로 확인해줘">🕒 오늘 시간표 (나이스)</button>
+            <button class="prompt-chip" data-prompt="이번 주 1학년 1반 전체 시간표 나이스로 보여줘">🗓️ 주간 시간표 (나이스)</button>
+            <button class="prompt-chip" data-prompt="제출해야 할 수행평가나 과제 있는 지 확인해줘">📝 안 낸 수행평가 확인</button>
+            <button class="prompt-chip" data-prompt="최근 학교 공지사항 5개만 요약해줘">📢 학교 공지사항</button>
+            <button class="prompt-chip" data-prompt="현재 서버 PC 하드웨어 상태(CPU, 메모리, 디스크) 알려줘">💻 서버 상태 확인</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="savePluginsBtn">확인</button>
       </div>
     </div>
   </div>
