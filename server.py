@@ -8,6 +8,8 @@ import sys
 import json
 import socket
 import logging
+import threading
+import time
 import webbrowser
 import yaml
 from typing import Dict, Any, Optional, List
@@ -318,18 +320,104 @@ def print_banner():
     print("=" * 72 + "\n")
 
 
+class ServerThread(threading.Thread):
+    def __init__(self, uvicorn_app, host: str, port: int):
+        super().__init__(daemon=True)
+        self.app = uvicorn_app
+        self.host = host
+        self.port = port
+        self.config = uvicorn.Config(app=self.app, host=self.host, port=self.port, log_level="info")
+        self.server = uvicorn.Server(self.config)
+
+    def run(self):
+        try:
+            self.server.run()
+        except Exception as e:
+            logger.error(f"Uvicorn server error: {e}")
+
+    def stop(self):
+        if self.server:
+            self.server.should_exit = True
+
+
+def is_port_free(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, port))
+            return True
+    except OSError:
+        return False
+
+
 def main():
+    global PORT
     print_banner()
 
+    is_headless = "--headless" in sys.argv or "--cli" in sys.argv or os.environ.get("HEADLESS") == "1"
+
+    # Check if port is available
+    if not is_port_free(HOST, PORT):
+        logger.warning(f"Port {PORT} is already in use.")
+        # Check if already a running Gemini Hub Server
+        already_running = False
+        try:
+            with httpx.Client(timeout=1.2) as client:
+                r = client.get(f"http://localhost:{PORT}/api/status")
+                if r.status_code == 200 and r.json().get("status") == "online":
+                    already_running = True
+        except Exception:
+            pass
+
+        if already_running:
+            logger.info(f"Existing Gemini Hub Server detected on port {PORT}. Reusing active instance.")
+            if OPEN_BROWSER:
+                webbrowser.open(f"http://localhost:{PORT}")
+            if not is_headless:
+                try:
+                    from hub_gui import HubGuiDashboard
+                    gui = HubGuiDashboard(host=HOST, port=PORT, plugin_manager=plugin_manager)
+                    gui.run()
+                    return
+                except Exception as e:
+                    logger.error(f"Failed to launch GUI: {e}")
+            return
+        else:
+            # Find next free port
+            for p in range(PORT + 1, PORT + 20):
+                if is_port_free(HOST, p):
+                    logger.info(f"Switched to available port {p}")
+                    PORT = p
+                    break
+
+    # Start server in daemon thread
+    server_thread = ServerThread(app, HOST, PORT)
+    server_thread.start()
+
     if OPEN_BROWSER:
-        import threading
         def open_tab():
-            import time
             time.sleep(1.2)
             webbrowser.open(f"http://localhost:{PORT}")
         threading.Thread(target=open_tab, daemon=True).start()
 
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    if is_headless:
+        logger.info("Running in headless console mode. Press Ctrl+C to terminate.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            server_thread.stop()
+    else:
+        try:
+            from hub_gui import HubGuiDashboard
+            gui = HubGuiDashboard(host=HOST, port=PORT, plugin_manager=plugin_manager, on_close_callback=server_thread.stop)
+            gui.run()
+        except Exception as e:
+            logger.error(f"Desktop GUI unavailable or failed to launch ({e}). Falling back to console.")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                server_thread.stop()
 
 
 if __name__ == "__main__":

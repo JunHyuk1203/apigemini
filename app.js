@@ -136,12 +136,88 @@
     return md.trim();
   }
 
+  const DEFAULT_SYSTEM_INSTRUCTION = `당신은 마산중앙고등학교(경상남도 창원시 마산합포구 소재)의 공식 스마트 AI 비서 '마산중앙고 제미나이'입니다.
+- 학생, 학부모, 선생님을 친절하고 스마트하게 돕는 맞춤형 교육 도우미입니다.
+- 교육부 나이스(NEIS) 연동을 통해 1~7교시 고등학교 시간표, 학사일정, 급식 식단(중식/석식)을 실시간으로 확인하고 안내합니다.
+- 리로스쿨(RiroSchool) 허브 연동 시 공지사항, 가정통신문, 수행평가/과제 일정, 개인 성적 등을 조회할 수 있습니다.
+- 시간표, 급식, 학사일정 등 최신 정보 문의 시 연동된 도구(Functions)를 적극적으로 호출하여 정확한 데이터를 제공하세요.
+- 답변은 정중하고 가독성 높은 마크다운 표/글머리기호로 정리해 주세요.`;
+
   const DEFAULT_SETTINGS = {
     temperature: 1.0,
     maxOutputTokens: 8192,
     topP: 0.95,
-    systemInstruction: ''
+    systemInstruction: DEFAULT_SYSTEM_INSTRUCTION
   };
+
+  function getStandaloneFallbackTools() {
+    return [
+      {
+        name: 'neis_get_timetable',
+        description: '마산중앙고등학교 1~7교시 시간표를 조회합니다. 학년(1~3), 반(1~10), 조회 일자를 지정할 수 있습니다.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            grade: { type: 'INTEGER', description: '학년 (1, 2, 3)' },
+            class_name: { type: 'INTEGER', description: '학급 반 번호 (예: 1반은 1)' },
+            date: { type: 'STRING', description: '조회 날짜 (YYYYMMDD 형식, 비워두면 오늘)' }
+          },
+          required: ['grade', 'class_name']
+        }
+      },
+      {
+        name: 'neis_get_today_meal',
+        description: '마산중앙고등학교 오늘의 급식 식단표(중식, 석식, 칼로리 정보)를 조회합니다.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            date: { type: 'STRING', description: '조회 날짜 (YYYYMMDD 형식, 비워두면 오늘)' }
+          }
+        }
+      },
+      {
+        name: 'neis_get_school_schedule',
+        description: '마산중앙고등학교 학사일정(시험, 방학, 행사, 휴업일 등)을 조회합니다.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            from_date: { type: 'STRING', description: '조회 시작일 (YYYYMMDD 형식)' },
+            to_date: { type: 'STRING', description: '조회 종료일 (YYYYMMDD 형식)' }
+          }
+        }
+      },
+      {
+        name: 'riroschool_get_notices',
+        description: '마산중앙고 리로스쿨 학교 공지사항 목록을 조회합니다.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            page: { type: 'INTEGER', description: '페이지 번호 (기본 1)' }
+          }
+        }
+      },
+      {
+        name: 'riroschool_get_assignments',
+        description: '마산중앙고 리로스쿨 수행평가 및 과제방 목록을 조회합니다.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            page: { type: 'INTEGER', description: '페이지 번호' }
+          }
+        }
+      },
+      {
+        name: 'riroschool_get_scores',
+        description: '마산중앙고 리로스쿨 학생 개인 성적표를 조회합니다.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            term: { type: 'STRING', description: '학기 또는 시험 구분' }
+          }
+        }
+      }
+    ];
+  }
 
   const FALLBACK_MODELS = [
     { name: 'gemini-4-argon', displayName: 'Gemini 4 Argon (최상위 프론티어)', description: 'Google DeepMind 최신 심층 추론 및 자율 에이전트 플래그십 모델', inputTokenLimit: 1048576 },
@@ -1578,27 +1654,46 @@ ${att.data}` });
               badgesContainer.appendChild(badge);
               scrollToBottom(false);
 
-              let toolOutput = {};
-              try {
-                const execRes = await fetch(getApiUrl('/api/tools/execute'), {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ name: cleanName, args: call.args || {} })
-                });
-                const execData = await execRes.json();
-                if (execData.success) {
-                  toolOutput = execData.result;
-                  badge.className = 'tool-call-badge success';
-                  badge.innerHTML = `<span>✓</span><span>${escapeHtml(displayName)} 완료</span>`;
-                } else {
-                  toolOutput = { error: execData.error || '실행 실패' };
-                  badge.className = 'tool-call-badge error';
-                  badge.innerHTML = `<span>✕</span><span>${escapeHtml(displayName)} 실패: ${escapeHtml(execData.error || '')}</span>`;
+              let toolOutput = null;
+              let executedSuccessfully = false;
+
+              // 1. Try Hub Server if available
+              if (state.serverAvailable) {
+                try {
+                  const execRes = await fetch(getApiUrl('/api/tools/execute'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: cleanName, args: call.args || {} })
+                  });
+                  if (execRes.ok) {
+                    const execData = await execRes.json();
+                    if (execData.success) {
+                      toolOutput = execData.result;
+                      executedSuccessfully = true;
+                    }
+                  }
+                } catch (err) {
+                  console.warn('Hub server execute failed, falling back to client-side:', err);
                 }
-              } catch (err) {
-                toolOutput = { error: err.message };
+              }
+
+              // 2. Client-side direct execution fallback (NEIS or Standalone)
+              if (!executedSuccessfully) {
+                const clientRes = await executeDirectClientTool(cleanName, call.args || {});
+                if (clientRes && !clientRes.error) {
+                  toolOutput = clientRes;
+                  executedSuccessfully = true;
+                } else {
+                  toolOutput = clientRes || { error: '실행 실패' };
+                }
+              }
+
+              if (executedSuccessfully) {
+                badge.className = 'tool-call-badge success';
+                badge.innerHTML = `<span>✓</span><span>${escapeHtml(displayName)} 완료</span>`;
+              } else {
                 badge.className = 'tool-call-badge error';
-                badge.innerHTML = `<span>✕</span><span>${escapeHtml(displayName)} 연결 오류</span>`;
+                badge.innerHTML = `<span>✕</span><span>${escapeHtml(displayName)}: ${escapeHtml(toolOutput.error || toolOutput.notice || '실행 불가')}</span>`;
               }
 
               allExecutedTools.push({
@@ -2274,17 +2369,122 @@ ${att.data}` });
   // 15.5 Pluggable Services & Hub Server Integration
   // ==========================================================================
 
+  const NEIS_KEY = '0c27c5193f7f45019e499af586e380f5';
+  const NEIS_OFFICE = 'S10';
+  const NEIS_SCHOOL = '9010094';
+
+  async function executeDirectClientTool(name, args) {
+    const today = new Date();
+    const yyyymmdd = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
+
+    // 1. NEIS Timetable (1~7교시 완전 조회)
+    if (name.includes('timetable')) {
+      const grade = args.grade || 1;
+      const classNum = args.class_name || args.class_num || 1;
+      const date = (args.date ? String(args.date).replace(/[^0-9]/g, '') : yyyymmdd);
+      const url = `https://open.neis.go.kr/hub/hisTimetable?Type=json&pIndex=1&pSize=100&KEY=${NEIS_KEY}&ATPT_OFCDC_SC_CODE=${NEIS_OFFICE}&SD_SCHUL_CODE=${NEIS_SCHOOL}&GRADE=${grade}&CLASS_NM=${classNum}&ALL_TI_YMD=${date}`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.hisTimetable && data.hisTimetable[1] && data.hisTimetable[1].row) {
+          const rows = data.hisTimetable[1].row;
+          const periods = rows.map(r => ({
+            date: r.ALL_TI_YMD.slice(0, 4) + '-' + r.ALL_TI_YMD.slice(4, 6) + '-' + r.ALL_TI_YMD.slice(6, 8),
+            period: `${r.PERIO}교시`,
+            subject: r.ITRT_CNTNT ? r.ITRT_CNTNT.trim() : '수업'
+          }));
+          return {
+            school: '마산중앙고등학교',
+            grade: grade,
+            class_num: classNum,
+            date: date,
+            total_periods: periods.length,
+            timetable: periods
+          };
+        }
+        return {
+          school: '마산중앙고등학교',
+          grade,
+          class_num: classNum,
+          date,
+          timetable: [],
+          message: '해당 일자의 시간표 정보가 없거나 주말/휴일입니다.'
+        };
+      } catch (e) {
+        return { error: `나이스 시간표 조회 실패: ${e.message}` };
+      }
+    }
+
+    // 2. NEIS Meals (중식, 석식, 칼로리)
+    if (name.includes('meal')) {
+      const date = (args.date ? String(args.date).replace(/[^0-9]/g, '') : yyyymmdd);
+      const url = `https://open.neis.go.kr/hub/mealServiceDietInfo?Type=json&pIndex=1&pSize=10&KEY=${NEIS_KEY}&ATPT_OFCDC_SC_CODE=${NEIS_OFFICE}&SD_SCHUL_CODE=${NEIS_SCHOOL}&MLSV_YMD=${date}`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.mealServiceDietInfo && data.mealServiceDietInfo[1] && data.mealServiceDietInfo[1].row) {
+          const rows = data.mealServiceDietInfo[1].row;
+          let lunch = '', dinner = '', cal = '';
+          const meals = [];
+          rows.forEach(r => {
+            const menuClean = (r.DDISH_NM || '').replace(/<br\s*\/?>/gi, ', ').replace(/\s*\([0-9.]+\)/g, '').trim();
+            meals.push({ date: r.MLSV_YMD, type: r.MMEAL_SC_NM, menu: menuClean, calorie: r.CAL_INFO });
+            if (r.MMEAL_SC_NM === '중식') { lunch = menuClean; cal = r.CAL_INFO; }
+            if (r.MMEAL_SC_NM === '석식') { dinner = menuClean; }
+          });
+          return { date, lunch, dinner, calorie: cal, meals };
+        }
+        return { date, lunch: '급식 정보가 없습니다 (주말/휴일/방학 등).', dinner: '', meals: [] };
+      } catch (e) {
+        return { error: `나이스 급식 조회 실패: ${e.message}` };
+      }
+    }
+
+    // 3. NEIS School Schedule (학사일정)
+    if (name.includes('schedule') || name.includes('academic')) {
+      const from = (args.from_date ? String(args.from_date).replace(/[^0-9]/g, '') : yyyymmdd.slice(0, 6) + '01');
+      const to = (args.to_date ? String(args.to_date).replace(/[^0-9]/g, '') : yyyymmdd.slice(0, 4) + '1231');
+      const url = `https://open.neis.go.kr/hub/SchoolSchedule?Type=json&pIndex=1&pSize=100&KEY=${NEIS_KEY}&ATPT_OFCDC_SC_CODE=${NEIS_OFFICE}&SD_SCHUL_CODE=${NEIS_SCHOOL}&AA_FROM_YMD=${from}&AA_TO_YMD=${to}`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.SchoolSchedule && data.SchoolSchedule[1] && data.SchoolSchedule[1].row) {
+          const rows = data.SchoolSchedule[1].row;
+          const schedules = rows.map(r => ({
+            date: r.AA_YMD.slice(0, 4) + '-' + r.AA_YMD.slice(4, 6) + '-' + r.AA_YMD.slice(6, 8),
+            event_name: r.EVENT_NM,
+            target_grades: r.ONE_GRADE_EVENT_YN === 'Y' ? '1학년' : (r.TW_GRADE_EVENT_YN === 'Y' ? '2학년' : (r.THREE_GRADE_EVENT_YN === 'Y' ? '3학년' : '전학년')),
+            holiday_type: r.SBTR_DD_SC_NM
+          }));
+          return { school: '마산중앙고등학교', from_date: from, to_date: to, schedules };
+        }
+        return { school: '마산중앙고등학교', from_date: from, to_date: to, schedules: [] };
+      } catch (e) {
+        return { error: `나이스 학사일정 조회 실패: ${e.message}` };
+      }
+    }
+
+    // 4. RiroSchool Private Data fallback notice
+    if (name.includes('riroschool') || name.includes('notice') || name.includes('score') || name.includes('assignment') || name.includes('letter')) {
+      return {
+        notice: "마산중앙고 리로스쿨 비공개 데이터(공지사항, 성적, 과제)는 PC에서 GeminiHubServer.exe를 실행한 후 http://localhost:8000 으로 접속하시면 안전하게 실시간 조회하실 수 있습니다."
+      };
+    }
+
+    return { error: `지원되지 않는 도구: ${name}` };
+  }
+
   async function checkHubServer() {
     try {
       const res = await fetch(getApiUrl('/api/status'), { cache: 'no-cache' });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('Status not ok');
 
       const data = await res.json();
       if (data.status === 'online') {
         state.serverAvailable = true;
         state.serverStatus = data;
 
-        // Fetch tool declarations and plugins
+        // Fetch tool declarations and plugins from Hub
         await refreshPluginsData();
 
         // Update UI Badges
@@ -2303,12 +2503,39 @@ ${att.data}` });
         if (dom.serverLanHint && data.lan_urls && data.lan_urls.length > 0) {
           dom.serverLanHint.textContent = `스마트폰 접속: ${data.lan_urls[0]}`;
         }
+      } else {
+        throw new Error('Server not online');
       }
     } catch (_) {
-      // Hub server not present (standalone mode)
+      // Hub server not present (standalone mode / GitHub Pages)
       state.serverAvailable = false;
-      if (dom.pluginActiveBadge) dom.pluginActiveBadge.style.display = 'none';
-      if (dom.headerActivePluginTag) dom.headerActivePluginTag.style.display = 'none';
+      state.toolDeclarations = getStandaloneFallbackTools();
+      state.plugins = [
+        {
+          id: 'neis',
+          name: '교육부 나이스 (NEIS)',
+          description: '1~7교시 고교 시간표, 학사일정, 급식 식단표 (브라우저 직접 연동)',
+          enabled: true,
+          tools: ['neis_get_timetable', 'neis_get_today_meal', 'neis_get_school_schedule']
+        },
+        {
+          id: 'riroschool',
+          name: '마산중앙고 리로스쿨 (허브 대기)',
+          description: '공지사항, 가정통신문, 수행평가/과제, 성적 (GeminiHubServer.exe 실행 시 활성화)',
+          enabled: false,
+          tools: ['riroschool_get_notices', 'riroschool_get_assignments', 'riroschool_get_scores']
+        }
+      ];
+      if (dom.pluginActiveBadge) dom.pluginActiveBadge.style.display = 'inline-block';
+      if (dom.headerActivePluginTag) {
+        dom.headerActivePluginTag.style.display = 'inline-flex';
+        if (dom.activePluginText) {
+          dom.activePluginText.textContent = `나이스 직접 연동`;
+        }
+      }
+      if (dom.serverConnectionText) {
+        dom.serverConnectionText.textContent = `나이스 직접 연동 모드 (시간표·급식 활성)`;
+      }
     }
   }
 
